@@ -113,4 +113,7 @@ unpacked build (macOS: `packaging/minos.py` checks that no part needs a newer ma
 makes a pre-release. pywebview is pinned to 6.2.1 because `guards.py` patches its internals: a new version must pass
 `tests/test_pins.py` and both systems' self-tests.
 
+**Icon**: the game's logo as on the rulebook cover. `python packaging/icon/make_icon.py <Half_Holder.jpg>` (TTSCardMaker
+`MDW/Assets/Holders/`) rebuilds `packaging/icon/CardBrowser.icns` (on a Mac) and `CardBrowser.ico`.
+
 **Licence**: CC0 1.0, like TTSCardMaker (`LICENSE`). Bundled software and its licences: `THIRD-PARTY-NOTICES.txt`.

@@ -12,6 +12,7 @@ assert re.fullmatch(r"io\.github\.michaeljsr\.cardbrowser(\.[a-z0-9]+)?", BUNDLE
 MAC = sys.platform == "darwin"
 NOTICES = ROOT / "THIRD-PARTY-NOTICES.txt"
 assert NOTICES.is_file(), "run packaging/notices.py THIRD-PARTY-NOTICES.txt first"
+ICON = ROOT / "packaging" / "icon" / ("CardBrowser.icns" if MAC else "CardBrowser.ico")   # make_icon.py
 WHY = "CardBrowser reads your TTSCardMaker folder to open, show and copy card files."
 UNUSED = ["qt", "cef", "mshtml", "android", "gtk"] + (["winforms", "edgechromium", "win32"] if MAC else ["cocoa"])
 
@@ -37,6 +38,7 @@ exe = EXE(
     argv_emulation=False,
     target_arch=os.environ.get("CB_TARGET_ARCH") or None,
     codesign_identity=None,
+    icon=None if MAC else str(ICON),   # Windows: the exe, its window and the taskbar (pywebview takes the exe's icon)
 )
 coll = COLLECT(exe, a.binaries, a.datas, upx=False, name="CardBrowser")
 if MAC:
@@ -44,6 +46,7 @@ if MAC:
         coll,
         name="CardBrowser.app",
         bundle_identifier=BUNDLE_ID,
+        icon=str(ICON),
         version=VERSION,
         info_plist={
             "CFBundleName": "CardBrowser",
