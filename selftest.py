@@ -725,12 +725,12 @@ def persist(opts):
             report["timing"] = f"page at {t0 - started:.1f} s, answer in {time.monotonic() - t0:.1f} s"
             if mode == "write":
                 out["ok"], out["detail"] = got == "ok", f"wrote localStorage + IndexedDB: {got}"
-                time.sleep(2.0)                      # the engine writes to disk after the call
             else:
                 got = json.loads(got)
                 out["ok"] = got == {"ls": KEPT, "idb": KEPT}
                 out["detail"] = "read back: localStorage {}, IndexedDB {}".format(
                     *("kept" if got.get(k) == KEPT else f"LOST ({str(got.get(k))[:20]})" for k in ("ls", "idb")))
+            time.sleep(2.0)                          # the engine writes (or removes) on disk after the call
         except Exception as e:                       # noqa: BLE001
             out["detail"] = cardbrowser.where(e)
         finally:
