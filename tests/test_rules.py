@@ -137,21 +137,22 @@ def test_live_paths_rule_length():
     assert cardbrowser.card_file("/", "Creatures/" + "a" * 226 + ".psd", (".psd",)) is not None   # 240 is fine
 
 
-def test_page_url_takes_the_escaped_form():
-    class Uri:                                        # WebView2's System.Uri: str() unescapes
-        AbsoluteUri = "https://michaeljsr.github.io/TTSCardMaker/#/cards?q=mini%20doomer"
-
-        def __str__(self):
-            return "https://michaeljsr.github.io/TTSCardMaker/#/cards?q=mini doomer"
-
-    class Win:
-        def __init__(self, u):
-            self.u = u
-
-        def get_current_url(self):
-            return self.u
-    assert cardbrowser.page_url(Win(Uri())) == Uri.AbsoluteUri and guards.outside(cardbrowser.page_url(Win(Uri())))
-    assert cardbrowser.page_url(Win(SITE)) == SITE and cardbrowser.page_url(Win(None)) == "" == cardbrowser.page_url(None)
+def test_menu_opens_the_page_s_escaped_address(monkeypatch):
+    """pywebview 6.2.1 on WebView2 keeps str(System.Uri) after a full load (%20 as a space): the menu asks the page."""
+    opened = []
+    monkeypatch.setattr(guards, "_browser", opened.append)
+    escaped = SITE + "?q=a%20b#/cards?q=mini%20doomer"
+    w = FakeWindow(escaped.replace("%20", " "), href=escaped)
+    w.events.loaded.set()
+    monkeypatch.setattr(cardbrowser, "_window", w)
+    cardbrowser.in_browser()
+    assert opened == [escaped]
+    for href in (None, 42, "https://evil.example/", JsError()):     # no answer, or not a site page: pywebview's URL
+        w.href, w.url, opened[:] = href, SITE + "#/card/z", []
+        guards._opened.clear()                                      # outside's 3-per-10-s limit
+        cardbrowser.in_browser()
+        assert opened == [SITE + "#/card/z"], href
+    assert cardbrowser.page_url(w) == SITE + "#/card/z" and cardbrowser.page_url(None) == ""
 
 
 def test_windows_never_loads_mshtml(tmp_path, monkeypatch):
@@ -211,12 +212,23 @@ def test_gtk_never_loads_srcdoc_frames(monkeypatch):
         assert (BrowserView().on_navigation(None, d, 0) == "engine") is ok and d.ignored is not ok, url
 
 
+class JsError(Exception):
+    pass
+
+
 class FakeWindow:
-    """pywebview's Window as the menu uses it: loaded event, run_js, load_url, get_current_url (waits when not loaded)."""
-    def __init__(self, url):
+    """pywebview's Window as the menu uses it: loaded event, run_js, load_url, get_current_url (waits when not loaded),
+    evaluate_js('location.href')."""
+    def __init__(self, url, href=None):
         import threading
         self.events = type("E", (), {"loaded": threading.Event()})()
-        self.url, self.did = url, []
+        self.url, self.did, self.href = url, [], url if href is None else href
+
+    def evaluate_js(self, js):
+        assert js == "location.href" and self.events.loaded.is_set()
+        if isinstance(self.href, Exception):
+            raise self.href
+        return self.href
 
     def run_js(self, js):
         self.did.append(("run_js", js))

@@ -242,9 +242,17 @@ def inject_script():
 
 
 def page_url(window):
-    """The window's URL as text (WebView2 gives a System.Uri, whose str() unescapes: %20 becomes a space)."""
-    u = window.get_current_url() if window else None
-    return str(getattr(u, "AbsoluteUri", u) or "")
+    """The window's URL as pywebview has it (WebView2 after a full load: System.Uri text, %20 shown as a space)."""
+    return str((window.get_current_url() if window else None) or "")
+
+
+def page_href(window):
+    """The page's own location.href (escaped on every engine); pywebview's URL if the page cannot answer."""
+    try:
+        href = window.evaluate_js("location.href")
+    except Exception:                                # noqa: BLE001 (mid-load, a JavaScript error)
+        href = None
+    return href if isinstance(href, str) and guards.on_site(href) else page_url(window)
 
 
 def on_loaded(window):
@@ -269,7 +277,7 @@ def reload():
 
 def in_browser():
     if _window:
-        guards.outside(page_url(_window) if _window.events.loaded.is_set() else _start)
+        guards.outside(page_href(_window) if _window.events.loaded.is_set() else _start)
 
 
 def thread_error(a):

@@ -654,6 +654,18 @@ def steps_body(h, rec, S, O, site, root, step, window):
     said = h.click(1)
     step("ST17", "reload mid-reply", ok and late == 1 and len(first) == 1 and said.startswith("Showing") and len(rec.take()) == 1
          and threading.excepthook is cardbrowser.thread_error, f"late reply logged {late}x; next Show: {said}")
+    # ST18: the menu's Open this page in my browser takes the page's escaped address after a full load
+    page = site + "index.html?q=a%20b#/cards?q=mini%20doomer"
+    ok = h.load(page)
+    raw = h.url()
+    rec.take()
+    guards._opened.clear()
+    menu = {m.title: m.function for m in cardbrowser.menus()[0].items if hasattr(m, "function")}
+    menu["Open this page in my browser"]()
+    opened = rec.take()
+    step("ST18", "page link", ok and opened == [("browser", page)], f"browser got {len(opened)}, "
+         f"{'the escaped address' if opened == [('browser', page)] else 'NOT the address'}; pywebview's URL "
+         f"{'escaped' if raw == page else 'unescaped' if raw == page.replace('%20', ' ') else 'other'}")
     # ST11: nothing the page or log saw holds a path or a traceback
     log_text = (cardbrowser.app_home() / "cardbrowser.log").read_text(encoding="utf-8")
     seen = "\n".join(map(str, h.replies)) + log_text + "\n".join(rec.logs)      # raw text: JSON doubles backslashes
