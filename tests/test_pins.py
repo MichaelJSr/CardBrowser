@@ -112,3 +112,27 @@ def test_webview2_notice_names_the_bundled_sdk():
     assert notices.WEBVIEW2.encode("utf-16-le") in (ROOT / "lib/Microsoft.Web.WebView2.Core.dll").read_bytes()
     title, text = notices.webview2()
     assert notices.WEBVIEW2 in title and "Redistributions in binary form" in text and "NOTICES AND INFORMATION" in text
+
+
+def test_minos_reads_every_slice(tmp_path):
+    """packaging/minos.py (the macOS job): any binary needing a newer macOS than Info.plist's minimum fails the build."""
+    import plistlib
+    import struct
+    spec = importlib.util.spec_from_file_location("minos", Path(__file__).resolve().parent.parent / "packaging/minos.py")
+    minos = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(minos)
+
+    def thin(cmd, v):                              # a 64-bit Mach-O header, a 16-byte filler command, then cmd
+        body = struct.pack("<II", 0x1, 16) + bytes(8) + (struct.pack("<IIIIII", 0x32, 24, 1, v, v, 0) if cmd == 0x32
+                                                          else struct.pack("<IIII", 0x24, 16, v, v))
+        return struct.pack("<IiiIIIII", 0xFEEDFACF, 0, 0, 2, 2, len(body), 0, 0) + body
+    a, b = thin(0x24, 0x0A0D00), thin(0x32, 0x0B0000)                  # 10.13 (old command), 11.0
+    fat = struct.pack(">II", 0xCAFEBABE, 2) + struct.pack(">iiIII", 7, 3, 48, len(a), 0) + struct.pack(">iiIII", 12, 0, 48 + len(a), len(b), 0)
+    assert minos.minos_of(fat + bytes(48 - len(fat)) + a + b) == [(10, 13, 0), (11, 0, 0)]
+    app = tmp_path / "CardBrowser.app"
+    (app / "Contents" / "MacOS").mkdir(parents=True)
+    (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps({"LSMinimumSystemVersion": "11.0"}))
+    (app / "Contents" / "MacOS" / "CardBrowser").write_bytes(fat + bytes(48 - len(fat)) + a + b)
+    assert minos.main(app) == 0
+    (app / "Contents" / "lib.so").write_bytes(thin(0x32, 0x1A0000))     # 26.0
+    assert minos.main(app) == 1

@@ -23,7 +23,8 @@ _browser = webbrowser.open                  # the self-test swaps in a recorder
 # The app is read-only (owner 11-21). APP_FLAG tells the site so before its own scripts (the hook contract: the site then
 # shows no Sign in, Edit or editor). NO_KEYS: no page may keep a WebCrypto key in IndexedDB (the site's sign-in and
 # remembered deck passphrases do): WebKit seals one with a key in the macOS keychain, which asks for the Mac password
-# after each unsigned update. START (both) runs at the start of every document, in every frame, on every engine.
+# after each unsigned update. START (both) runs at the start of every document, in every frame, on every engine; where it
+# could not be added, no site page loads (never a page with Sign in).
 APP_FLAG = """if (!("cardApp" in window)) Object.defineProperty(window, "cardApp", { value: Object.freeze({ readOnly: true }), enumerable: true });
 """
 NO_KEYS = """(() => {
@@ -135,11 +136,13 @@ def _install_mac():
         def webView_decidePolicyForNavigationAction_decisionHandler_(self, wv, action, handler):
             try:
                 _start_mac(wv)
-            except Exception as e:                      # noqa: BLE001 (inject.js still adds NO_KEYS after the load)
-                log.warning("start script: %s", type(e).__name__)
+                started = True
+            except Exception as e:                      # noqa: BLE001
+                started = False
+                log.error("start script: %s; no site page loads", type(e).__name__)
             try:
                 url, frame = str(action.request().URL().absoluteString()), action.targetFrame()
-                ok = frame_ok(url) or (frame is None and not action.shouldPerformDownload())
+                ok = (started and frame_ok(url)) or (frame is None and not action.shouldPerformDownload())   # None: a new window
                 link = frame is not None and frame.isMainFrame() and action.navigationType() == 0   # a link click
             except Exception as e:                      # noqa: BLE001
                 log.warning("navigation: %s", type(e).__name__)
@@ -183,19 +186,27 @@ def _install_win():
     nav, notify, new, ready = E.on_navigation_start, E.on_script_notify, E.on_new_window_request, E.on_webview_ready
 
     def on_webview_ready(self, sender, args):          # START first; pywebview's (it loads the page) once it is in
+        def go(task):
+            try:
+                if task.IsFaulted or task.IsCanceled:
+                    log.error("start script: not added; no site page loads")
+                else:
+                    self._cb_start = True
+            finally:
+                ready(self, sender, args)
         try:
             if args.IsSuccess:
                 task = sender.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(START)
-                task.ContinueWith(P.Action[P.Task[P.String]](lambda _t: ready(self, sender, args)), self.syncContextTaskScheduler)
+                task.ContinueWith(P.Action[P.Task[P.String]](go), self.syncContextTaskScheduler)
                 return
         except Exception as e:                          # noqa: BLE001
-            log.warning("start script: %s", type(e).__name__)
+            log.error("start script: %s; no site page loads", type(e).__name__)
         ready(self, sender, args)
 
     def on_navigation_start(self, sender, args):       # main frame only; never raises into .NET
         try:
             url = str(args.Uri)
-            ok = frame_ok(url)
+            ok = getattr(self, "_cb_start", False) and frame_ok(url)   # without START no page loads
             if not ok:
                 args.Cancel = True
                 if args.IsUserInitiated:
@@ -258,16 +269,16 @@ def _install_gtk():
     def on_navigation(self, wv, decision, kind):        # main frames and subframes; never raises into GTK
         try:
             if not getattr(self, "_cb_start", False):   # START before the first document
-                self._cb_start = True
                 self.manager.add_script(P.webkit.UserScript.new(START, P.webkit.UserContentInjectedFrames.ALL_FRAMES,
                                                                 P.webkit.UserScriptInjectionTime.START, None, None))
+                self._cb_start = True
         except Exception as e:                          # noqa: BLE001
-            log.warning("start script: %s", type(e).__name__)
+            log.error("start script: %s; no site page loads", type(e).__name__)
         try:
             if type(decision) is P.webkit.NavigationPolicyDecision:
                 action = decision.get_navigation_action()
                 url = action.get_request().get_uri()
-                if not frame_ok(url) or url == "about:srcdoc":  # the bridge has no sender frame here: no srcdoc frames
+                if not (getattr(self, "_cb_start", False) and frame_ok(url)) or url == "about:srcdoc":   # srcdoc: no sender frame
                     log.info("navigation: refused %s", str(url).split(":", 1)[0][:20])
                     if action.get_navigation_type() == P.webkit.NavigationType.LINK_CLICKED:
                         outside(url)

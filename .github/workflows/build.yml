@@ -1,5 +1,5 @@
-# Builds CardBrowser for macOS (arm64, x64), Windows (x64) and Linux, self-tests each unpacked build on its runner, and
-# makes a GitHub pre-release on a v* tag. No secrets: the only token is the run's own.
+# Builds CardBrowser for macOS (arm64, x64) and Windows (x64), self-tests each unpacked build on its runner, and makes a
+# GitHub pre-release on a v* tag. Linux is not built (not supported yet). No secrets: the only token is the run's own.
 name: Build
 
 on:
@@ -17,20 +17,16 @@ env:
 
 jobs:
   test:
-    name: Tests (Python ${{ matrix.python }})
+    name: Tests
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.10", "3.13"]   # 3.10: the oldest system Python the Linux build runs on
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.13"
       - name: Install
         run: python -m pip install -r requirements.txt -c constraints.txt pytest
       - name: Unit tests
@@ -55,7 +51,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.13"   # python.org's universal2 build: the app runs on macOS 11+
+          python-version: "3.13"   # python.org's universal2 build (macos11 pkg): the app runs on macOS 11+ (minos.py checks)
       - name: Install
         run: python -m pip install -r requirements.txt -c constraints.txt pyinstaller pytest
       - name: Unit tests
@@ -72,6 +68,7 @@ jobs:
           archs=$(lipo -archs dist/CardBrowser.app/Contents/MacOS/CardBrowser)
           echo "archs: $archs"
           test "$archs" = "$ARCH"
+          python packaging/minos.py dist/CardBrowser.app   # no binary needs a newer macOS than Info.plist's minimum
       - name: Package
         run: |
           zip="CardBrowser-$(python cardbrowser.py --version)-mac-$LABEL.zip"
@@ -161,58 +158,10 @@ jobs:
             selftest-win.json
           if-no-files-found: error
 
-  linux:
-    name: Linux
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      WEBKIT_DISABLE_DMABUF_RENDERER: "1"   # Xvfb has no GPU
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: System packages (what makers install)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1 xvfb
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.13"   # builds the tarball; run.sh itself uses the system python3
-      - name: Install
-        run: python -m pip install -r requirements.txt -c constraints.txt pytest
-      - name: Unit tests
-        run: python -m pytest -q tests
-      - name: Package
-        run: |
-          PYTHON=python bash packaging/linux.sh
-          tgz=$(ls CardBrowser-*-linux.tar.gz)
-          echo "TGZ=$tgz" >> "$GITHUB_ENV"
-      - name: Self-test the unpacked app
-        timeout-minutes: 5
-        run: |
-          rm -rf "$RUNNER_TEMP/t"
-          mkdir -p "$RUNNER_TEMP/t"
-          tar -xzf "$TGZ" -C "$RUNNER_TEMP/t"
-          xvfb-run -a "$RUNNER_TEMP/t/CardBrowser/run.sh" --self-test --ci --report selftest-linux.json
-      - name: Saved data survives a restart
-        timeout-minutes: 5
-        run: |
-          export CARDBROWSER_HOME="$RUNNER_TEMP/persist"
-          xvfb-run -a "$RUNNER_TEMP/t/CardBrowser/run.sh" --self-test --persist write
-          xvfb-run -a "$RUNNER_TEMP/t/CardBrowser/run.sh" --self-test --persist read
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: ${{ !cancelled() }}
-        with:
-          name: linux
-          path: |
-            ${{ env.TGZ }}
-            selftest-linux.json
-          if-no-files-found: error
-
   release:
     name: Pre-release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, mac, windows, linux]
+    needs: [test, mac, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -247,7 +196,7 @@ jobs:
         working-directory: out
         run: |
           n=$(find . -maxdepth 1 -name 'CardBrowser-*' | wc -l)
-          test "$n" -eq 4 || { echo "::error::$n archives, not 4"; exit 1; }
+          test "$n" -eq 3 || { echo "::error::$n archives, not 3"; exit 1; }
           sha256sum CardBrowser-* selftest-*.json > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: Pre-release
@@ -257,5 +206,5 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease \
             --title "CardBrowser $GITHUB_REF_NAME" \
-            --notes "Unsigned test build. The README says how to open it the first time on each system." \
+            --notes "Unsigned test build for macOS and Windows. The README says how to open it the first time." \
             CardBrowser-* SHA256SUMS.txt selftest-*.json

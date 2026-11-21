@@ -3,8 +3,8 @@
 The TTSCardMaker card website in its own window, plus three buttons on every card that work with your own copy of
 the card files:
 
-- **Open in Photoshop**: opens the card's PSD from your TTSCardMaker folder (Linux: **Open PSD**, in your default app).
-- **Show in Finder** / **Explorer** / **folder**: shows the card's PNG in your folder (its PSD is beside it).
+- **Open in Photoshop**: opens the card's PSD from your TTSCardMaker folder.
+- **Show in Finder** / **Explorer**: shows the card's PNG in your folder (its PSD is beside it).
 - **Copy PNG**: copies the card's PNG from your folder, to paste anywhere (Discord, an image editor, a document).
 
 Everything else (search, card pages, decks, the rulebook, stats, people) is the live website, always up to date.
@@ -22,7 +22,8 @@ Get the newest release from the [Releases page](https://github.com/MichaelJSr/Ca
 | Mac with Apple silicon (Apple menu > About This Mac says "Chip") | `CardBrowser-<version>-mac-arm64.zip` |
 | Mac with an Intel chip (About This Mac says "Processor") | `CardBrowser-<version>-mac-x64.zip` |
 | Windows 10 or 11 (64-bit) | `CardBrowser-<version>-windows-x64.zip` |
-| Linux | `CardBrowser-<version>-linux.tar.gz` |
+
+Linux is not supported yet.
 
 ## Opening it the first time
 
@@ -30,9 +31,10 @@ CardBrowser is free and not signed with a paid Apple or Microsoft certificate, s
 
 **macOS** (11 Big Sur or newer)
 1. Double-click the zip, then drag `CardBrowser.app` into Applications.
-2. Open it. macOS says it can't check it for malware: click Done.
-3. Open System Settings > Privacy & Security, scroll down to Security and click **Open Anyway** (it shows for about an
-   hour after step 2). Enter your password, then click Open. macOS remembers this.
+2. Open it. macOS says it can't check it for malware (or can't verify the developer): close that message.
+3. macOS 15 or newer: open System Settings > Privacy & Security, scroll down to Security and click **Open Anyway** (it
+   shows for about an hour after step 2), enter your password, then click Open. macOS 11-14: Control-click the app in
+   Applications, choose Open, then click Open. macOS remembers this.
 4. The first time you use a button, macOS asks if CardBrowser may use your Desktop or Documents folder: click Allow.
    Because the app is unsigned, macOS treats each new version as a new app and asks again after every update.
 
@@ -42,11 +44,6 @@ CardBrowser is free and not signed with a paid Apple or Microsoft certificate, s
 3. If "Windows protected your PC" appears: click **More info**, then **Run anyway**.
 4. Smart App Control (some fresh Windows 11 installs) blocks unsigned apps with no "run anyway": turn it off to use it.
 5. CardBrowser needs Microsoft Edge WebView2 (Windows 11 and up-to-date Windows 10 have it); if not, it says so.
-
-**Linux**
-1. Install GTK and WebKit once. Debian/Ubuntu: `sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0
-   gir1.2-webkit2-4.1` (Fedora: `sudo dnf install python3-gobject webkit2gtk4.1`).
-2. `tar -xzf CardBrowser-<version>-linux.tar.gz`, then run `./CardBrowser/run.sh`.
 
 ## First use
 
@@ -62,7 +59,7 @@ CardBrowser is free and not signed with a paid Apple or Microsoft certificate, s
 | Your copy has no linked pictures yet… | Your copy is old: pull, or Photoshop will say links are missing. |
 | That folder isn't TTSCardMaker… | Choose the TTSCardMaker folder itself (it has Types and MDW inside). |
 | Photoshop not found: opened with your default app. | Photoshop wasn't found, so your usual app for PSD files opened it. |
-| macOS blocked CardBrowser from your folder… | Allow it in System Settings > Privacy & Security > Files and Folders. |
+| macOS blocked CardBrowser from your folder… | Allow it in System Settings > Privacy & Security > Files and Folders (macOS 11-12: System Preferences > Security & Privacy > Privacy). |
 | Still working on the last click. / Too many clicks… | Wait a moment, then click again. |
 | CardBrowser can't reach this page… | Use **Reload** in the CardBrowser menu (or press F5). |
 | …this version of the card site has no file buttons… | The website changed: tell the developers. Searching still works. |
@@ -92,7 +89,6 @@ To uninstall, delete the app, then (optional) its settings and website data:
 - macOS: `~/Library/Application Support/CardBrowser`, `~/Library/WebKit/io.github.michaeljsr.cardbrowser`,
   `~/Library/Caches/io.github.michaeljsr.cardbrowser`
 - Windows: `%LOCALAPPDATA%\CardBrowser`
-- Linux: `~/.config/CardBrowser`
 
 ## For developers
 
@@ -101,9 +97,9 @@ To uninstall, delete the app, then (optional) its settings and website data:
 `detail = {id, psd, png, slot}`; a browser shows nothing. Before the site's scripts CardBrowser sets a frozen
 `window.cardApp = {readOnly: true}` (`guards.py` START), so `appReadOnly()` leaves out Sign in, Edit and the editor.
 START also stops pages keeping WebCrypto keys in IndexedDB (macOS would seal them with a keychain key that asks for the
-Mac password after each update). A page CSP must allow `'unsafe-eval'` (pywebview's bridge uses `new Function`). No
-untrusted HTML in any frame (on Linux the app cannot tell a frame from the page). AutoCroissant's
-`tests/test_site_app_hook.py` guards all of this.
+Mac password after each update). If START cannot be added, no site page loads. A page CSP must allow `'unsafe-eval'`
+(pywebview's bridge uses `new Function`). No untrusted HTML in any frame. AutoCroissant's `tests/test_site_app_hook.py`
+guards all of this.
 
 **Self-test** (in every build): `CardBrowser --self-test [--ci] [--report FILE]` runs the real app, window hidden,
 against a fixture site and folder on 127.0.0.1, recording the file actions (macOS: run
@@ -111,10 +107,10 @@ against a fixture site and folder on 127.0.0.1, recording the file actions (macO
 read` in a second run with the same `CARDBROWSER_HOME`, checks that the website's saved data is kept.
 
 **Build**: from source, `pip install -r requirements.txt -c constraints.txt pyinstaller pytest` (tests: `python -m
-pytest -q tests`). macOS and Windows: `python packaging/notices.py THIRD-PARTY-NOTICES.txt`, then
-`pyinstaller --noconfirm packaging/CardBrowser.spec`. Linux: `packaging/linux.sh`. GitHub Actions
-(`.github/workflows/build.yml`) builds every system, self-tests each unpacked build, and on a `v<VERSION>` tag makes a
-pre-release. pywebview is pinned to 6.2.1 because `guards.py` patches its internals: a new version must pass
-`tests/test_pins.py` and every system's self-test.
+pytest -q tests`), then `python packaging/notices.py THIRD-PARTY-NOTICES.txt` and `pyinstaller --noconfirm
+packaging/CardBrowser.spec`. GitHub Actions (`.github/workflows/build.yml`) builds macOS and Windows, self-tests each
+unpacked build (macOS: `packaging/minos.py` checks that no part needs a newer macOS than 11), and on a `v<VERSION>` tag
+makes a pre-release. pywebview is pinned to 6.2.1 because `guards.py` patches its internals: a new version must pass
+`tests/test_pins.py` and both systems' self-tests.
 
 **Licence**: CC0 1.0, like TTSCardMaker (`LICENSE`). Bundled software and its licences: `THIRD-PARTY-NOTICES.txt`.

@@ -174,32 +174,31 @@ def test_windows_never_loads_mshtml(tmp_path, monkeypatch):
     assert "webview.platforms.winforms" not in sys.modules
 
 
-def test_gtk_never_loads_srcdoc_frames(monkeypatch):
-    """WebKitGTK's bridge gives no sender frame, so on Linux no srcdoc frame loads; site pages and blank frames do."""
+class Decision:                                       # WebKitGTK's NavigationPolicyDecision, action and request in one
+    def __init__(self, url):
+        self.url, self.ignored = url, False
+
+    def get_navigation_action(self):
+        return self
+    get_request = get_navigation_action
+
+    def get_uri(self):
+        return self.url
+
+    def get_navigation_type(self):
+        return 0
+
+    def ignore(self):
+        self.ignored = True
+
+
+def fake_gtk(monkeypatch, add_script):
+    """guards' GTK patches on a fake pywebview gtk backend; add_script: the view's UserContentManager.add_script."""
     import sys
     import types
 
-    class Decision:                                   # WebKitGTK's NavigationPolicyDecision, action and request in one
-        def __init__(self, url):
-            self.url, self.ignored = url, False
-
-        def get_navigation_action(self):
-            return self
-        get_request = get_navigation_action
-
-        def get_uri(self):
-            return self.url
-
-        def get_navigation_type(self):
-            return 0
-
-        def ignore(self):
-            self.ignored = True
-
-    added = []
-
     class BrowserView:
-        manager = types.SimpleNamespace(add_script=added.append)
+        manager = types.SimpleNamespace(add_script=add_script)
 
         def on_navigation(self, wv, decision, kind):
             return "engine"
@@ -213,12 +212,108 @@ def test_gtk_never_loads_srcdoc_frames(monkeypatch):
     monkeypatch.setitem(sys.modules, "webview.platforms.gtk", types.SimpleNamespace(BrowserView=BrowserView, webkit=webkit))
     monkeypatch.setattr(guards, "PATCHED", [])
     guards._install_gtk()
-    view = BrowserView()
+    return BrowserView()
+
+
+def test_gtk_never_loads_srcdoc_frames(monkeypatch):
+    """WebKitGTK's bridge gives no sender frame, so on Linux no srcdoc frame loads; site pages and blank frames do."""
+    added = []
+    view = fake_gtk(monkeypatch, added.append)
     for url, ok in ((SITE + "c/z/", True), ("about:blank", True), ("blob:https://michaeljsr.github.io/5f1c", True),
                     ("about:srcdoc", False), ("https://evil.example/", False)):
         d = Decision(url)
         assert (view.on_navigation(None, d, 0) == "engine") is ok and d.ignored is not ok, url
     assert added == [(guards.START, "all", "start", None, None)]          # the read-only flag, once, before the first page
+
+
+def test_no_site_page_without_the_start_script(monkeypatch):
+    """Where the read-only flag (START) could not be added, no page loads (never a site page with Sign in)."""
+    import sys
+    import types
+    tries = []
+
+    def add_script(script):                          # GTK: fails once, then works
+        tries.append(script)
+        if len(tries) == 1:
+            raise RuntimeError("no")
+    view = fake_gtk(monkeypatch, add_script)
+    first, then = Decision(SITE), Decision(SITE)
+    assert view.on_navigation(None, first, 0) is True and first.ignored
+    assert view.on_navigation(None, then, 0) == "engine" and not then.ignored and len(tries) == 2
+
+    class Task:                                       # Windows: AddScriptToExecuteOnDocumentCreatedAsync's task
+        IsCanceled = False
+
+        def __init__(self, faulted):
+            self.IsFaulted = faulted
+
+        def ContinueWith(self, fn, scheduler):
+            fn(self)
+    did = []
+
+    class EdgeChrome:
+        syncContextTaskScheduler = None
+
+        def on_webview_ready(self, sender, args):    # pywebview's: loads the first page
+            did.append("ready")
+
+        def on_navigation_start(self, sender, args):
+            did.append("load")
+
+        def on_script_notify(self, _, args):
+            pass
+
+        def on_new_window_request(self, sender, args):
+            pass
+    generic = type("Generic", (), {"__getitem__": lambda self, _: (lambda f: f)})()
+    monkeypatch.setitem(sys.modules, guards.MSHTML, None)
+    monkeypatch.setitem(sys.modules, "webview.platforms.winforms", types.SimpleNamespace(renderer="edgechromium"))
+    monkeypatch.setitem(sys.modules, "webview.platforms.edgechromium",
+                        types.SimpleNamespace(EdgeChrome=EdgeChrome, Action=generic, Task=generic, String=str))
+    guards._install_win()
+
+    def boom(_):
+        raise RuntimeError("no")
+    for add, loads in ((lambda _: Task(True), False), (boom, False), (lambda _: Task(False), True)):
+        did.clear()
+        e = EdgeChrome()
+        e.on_webview_ready(types.SimpleNamespace(CoreWebView2=types.SimpleNamespace(
+            AddScriptToExecuteOnDocumentCreatedAsync=add)), types.SimpleNamespace(IsSuccess=True))
+        nav = types.SimpleNamespace(Uri=SITE, Cancel=False, IsUserInitiated=False)
+        e.on_navigation_start(None, nav)
+        assert did == ["ready"] + ["load"] * loads and nav.Cancel is not loads
+
+
+@pytest.mark.skipif(guards.OS != "mac", reason="pyobjc: the macOS delegate")
+def test_mac_loads_no_site_page_without_the_start_script(monkeypatch):
+    import sys
+    import types
+
+    from Foundation import NSObject
+
+    class CBTestBridge(NSObject):                    # stand-ins for pywebview's classes (no AppKit app is made)
+        def userContentController_didReceiveScriptMessage_(self, ctl, msg):
+            pass
+
+    class CBTestDelegate(NSObject):
+        def webView_decidePolicyForNavigationAction_decisionHandler_(self, wv, action, handler):
+            handler(1)
+    view = types.SimpleNamespace(JSBridge=CBTestBridge, BrowserDelegate=CBTestDelegate)
+    monkeypatch.setitem(sys.modules, "webview.platforms.cocoa", types.SimpleNamespace(BrowserView=view))
+    monkeypatch.setattr(guards, "PATCHED", [])
+    guards._install_mac()
+    decide = view.BrowserDelegate.webView_decidePolicyForNavigationAction_decisionHandler_.callable
+    frame = types.SimpleNamespace(isMainFrame=lambda: True)
+    action = types.SimpleNamespace(request=lambda: types.SimpleNamespace(URL=lambda: types.SimpleNamespace(
+        absoluteString=lambda: SITE)), targetFrame=lambda: frame, navigationType=lambda: -1, shouldPerformDownload=lambda: False)
+    added = []
+    ucc = types.SimpleNamespace(userScripts=lambda: [], addUserScript_=added.append)
+    for config, want in ((lambda: (_ for _ in ()).throw(RuntimeError("no")), [0]),
+                         (lambda: types.SimpleNamespace(userContentController=lambda: ucc), [1])):
+        got = []
+        decide(view.BrowserDelegate.alloc().init(), types.SimpleNamespace(configuration=config), action, got.append)
+        assert got == want
+    assert len(added) == 1 and added[0].source() == guards.START
 
 
 class JsError(Exception):
