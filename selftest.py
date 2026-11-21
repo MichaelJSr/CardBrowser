@@ -1,6 +1,7 @@
-"""CardBrowser --self-test [--ci] [--report FILE]: the real app code against a fixture site and folder on 127.0.0.1, with
-external effects recorded (no Photoshop, file manager or browser opens). Safe mode (no --ci) never touches the real
-clipboard. Exits 0 only if every step passes."""
+"""CardBrowser --self-test [--ci] [--report FILE] [--persist write|read]: the real app code against a fixture site and
+folder on 127.0.0.1, with external effects recorded (no Photoshop, file manager or browser opens). Safe mode (no --ci)
+never touches the real clipboard. --persist: two runs (same CARDBROWSER_HOME) prove the saved web data (the site's
+sign-in) survives a restart. Exits 0 only if every step passes."""
 import hashlib
 import http.server
 import json
@@ -92,9 +93,9 @@ class Pages(http.server.ThreadingHTTPServer):
     """A loopback server for a dict of pages; it logs every path asked for."""
     daemon_threads = True
 
-    def __init__(self):
+    def __init__(self, port=0):
         self.pages, self.seen, self.down = {}, [], False
-        super().__init__(("127.0.0.1", 0), Handler)
+        super().__init__(("127.0.0.1", port), Handler)
         self.url = f"http://127.0.0.1:{self.server_address[1]}"
         threading.Thread(target=self.serve_forever, daemon=True).start()
 
@@ -167,8 +168,8 @@ def other_pages():
             "/frame.html": "<!doctype html>" + FRAME_POST, "/full.png": png_bytes(3)}
 
 
-# ---- quiet runs: never in the Dock, never focused, no saved web data, effects recorded ----
-def quiet():
+# ---- quiet runs: never in the Dock, never focused, no saved web data (unless kept), effects recorded ----
+def quiet(keep_data=False):
     if OS != "mac":
         return
     import AppKit
@@ -193,7 +194,9 @@ def quiet():
 
         def __getattr__(self, n):
             return getattr(WebKit, n)
-    cocoa.BrowserView.app, cocoa.WebKit = App(), Kit()
+    cocoa.BrowserView.app = App()
+    if not keep_data:                                # pywebview's private mode clears the default store: use a throwaway one
+        cocoa.WebKit = Kit()
 
 
 class Recorder:
@@ -645,12 +648,102 @@ def steps_body(h, rec, S, O, site, root, step, window):
     step("ST11", "no leaks", not leaks and h.replies, f"{len(h.replies)} replies + log checked")
 
 
+# ---- --persist write|read: the site's sign-in (localStorage + IndexedDB) survives a restart ----
+PERSIST_PORT = 47613                                 # fixed: both runs need the same origin
+KEPT = "kept-by-cardbrowser"
+WRITE = """window.__p = undefined;
+localStorage.setItem("cardbrowser-persist", %(v)s);
+const q = indexedDB.open("cardbrowser-persist", 1);
+q.onupgradeneeded = () => q.result.createObjectStore("s");
+q.onerror = () => { window.__p = "idb open failed"; };
+q.onsuccess = () => { const t = q.result.transaction("s", "readwrite"); t.objectStore("s").put(%(v)s, "k");
+  t.oncomplete = () => { q.result.close(); window.__p = "ok"; }; t.onerror = () => { window.__p = "idb put failed"; }; };
+1"""
+READ = """window.__p = undefined;
+const ls = localStorage.getItem("cardbrowser-persist");
+const q = indexedDB.open("cardbrowser-persist", 1);
+q.onupgradeneeded = () => q.result.createObjectStore("s");
+q.onerror = () => { window.__p = JSON.stringify({ ls, idb: "open failed" }); };
+q.onsuccess = () => { const g = q.result.transaction("s").objectStore("s").get("k");
+  g.onsuccess = () => { q.result.close(); localStorage.removeItem("cardbrowser-persist");
+    const d = indexedDB.deleteDatabase("cardbrowser-persist");            // leave nothing behind
+    d.onsuccess = d.onerror = d.onblocked = () => { window.__p = JSON.stringify({ ls, idb: g.result === undefined ? null : g.result }); }; };
+  g.onerror = () => { window.__p = JSON.stringify({ ls, idb: "get failed" }); }; };
+1"""
+
+
+def persist(opts):
+    mode = opts["persist"]
+    if mode not in ("write", "read") or not os.environ.get("CARDBROWSER_HOME"):
+        print("--persist takes write or read, with CARDBROWSER_HOME set (the same for both runs)", file=sys.stderr)
+        return 2
+    started = time.monotonic()
+    report = {"app": cardbrowser.VERSION, "os": OS, "python": platform.python_version(), "machine": platform.machine(),
+              "pywebview": pywebview_version(), "mode": "persist " + mode, "steps": []}
+
+    def finish(ok, detail):
+        report["steps"].append({"id": "P", "name": "persist " + mode, "pass": bool(ok), "detail": detail})
+        report["ok"] = bool(ok)
+        report["seconds"] = round(time.monotonic() - started, 1)
+        text = json.dumps(report, indent=1)
+        if opts["report"]:
+            Path(opts["report"]).write_text(text, encoding="utf-8")
+        print(text)
+        return 0 if ok else 1
+    try:
+        S = Pages(PERSIST_PORT)
+    except OSError as e:
+        return finish(False, f"port {PERSIST_PORT} busy ({type(e).__name__})")
+    S.pages["/TTSCardMaker/"] = "<!doctype html><meta charset=utf-8><title>P</title>persist"
+    site = f"{S.url}/TTSCardMaker/"
+    dog = threading.Timer(90, lambda: (finish(False, "90 s passed"), os._exit(3)))
+    dog.daemon = True
+    dog.start()
+    cardbrowser.setup_logging()
+    quiet(keep_data=True)
+    cardbrowser._first = False                       # no update check
+    window = cardbrowser.make_window(site, hidden=True)
+    h, out = Harness(window), {}
+
+    def body():
+        try:
+            if not h.ready():
+                out["detail"] = "page not loaded"
+                return
+            t0 = time.monotonic()
+            h.js((WRITE if mode == "write" else READ) % {"v": json.dumps(KEPT)})
+            if not h.until("window.__p !== undefined", 10):
+                out["detail"] = "no answer from the page"
+                return
+            got = h.js("window.__p")
+            report["timing"] = f"page at {t0 - started:.1f} s, answer in {time.monotonic() - t0:.1f} s"
+            if mode == "write":
+                out["ok"], out["detail"] = got == "ok", f"wrote localStorage + IndexedDB: {got}"
+                time.sleep(2.0)                      # the engine writes to disk after the call
+            else:
+                got = json.loads(got)
+                out["ok"] = got == {"ls": KEPT, "idb": KEPT}
+                out["detail"] = "read back: localStorage {}, IndexedDB {}".format(
+                    *("kept" if got.get(k) == KEPT else f"LOST ({str(got.get(k))[:20]})" for k in ("ls", "idb")))
+        except Exception as e:                       # noqa: BLE001
+            out["detail"] = cardbrowser.where(e)
+        finally:
+            window.destroy()
+    cardbrowser.start(body, private=False)
+    S.shutdown()
+    S.server_close()
+    logging.shutdown()
+    dog.cancel()
+    return finish(out.get("ok"), out.get("detail", "?"))
+
+
 def main(argv):
-    opts = {"ci": "--ci" in argv, "report": None}
-    if "--report" in argv:
-        i = argv.index("--report")
-        opts["report"] = argv[i + 1] if i + 1 < len(argv) else None
-    return run(opts)
+    opts = {"ci": "--ci" in argv, "report": None, "persist": None}
+    for flag in ("--report", "--persist"):
+        if flag in argv:
+            i = argv.index(flag)
+            opts[flag[2:]] = argv[i + 1] if i + 1 < len(argv) else ""
+    return persist(opts) if opts["persist"] is not None else run(opts)
 
 
 if __name__ == "__main__":
