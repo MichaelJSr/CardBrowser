@@ -10,6 +10,7 @@ import os
 import platform
 import shutil
 import socket
+import socketserver
 import sys
 import tempfile
 import threading
@@ -97,6 +98,11 @@ class Pages(http.server.ThreadingHTTPServer):
         self.pages, self.seen, self.down = {}, [], False
         super().__init__(("127.0.0.1", port), Handler)
         self.url = f"http://127.0.0.1:{self.server_address[1]}"
+
+    def server_bind(self):
+        """Binds without http.server's reverse DNS lookup of 127.0.0.1 (it stalled the built macOS app ~35 s)."""
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
         threading.Thread(target=self.serve_forever, daemon=True).start()
 
 
