@@ -5,3 +5,8 @@ build/
 dist/
 *.spec.bak
 .DS_Store
+THIRD-PARTY-NOTICES.txt
+CardBrowser-*.zip
+CardBrowser-*.tar.gz
+selftest-*.json
+persist-*.json
