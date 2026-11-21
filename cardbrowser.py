@@ -18,7 +18,7 @@ from pathlib import Path
 import actions
 import guards
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 NAME = "CardBrowser"
 BUNDLE_ID = "io.github.michaeljsr.cardbrowser"       # fixed for good: the saved web data is keyed on it
 LIVE = "https://michaeljsr.github.io/TTSCardMaker/"
