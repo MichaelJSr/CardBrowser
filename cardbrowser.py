@@ -88,14 +88,15 @@ def where(e):
 
 
 # ---- the path rule: only card PSD/PNG files inside the chosen folder ----
-TOPS = ("Creatures/", "Items/", "Field/", "N.M.E/", "Auxiliary/", "MDW/The Morgue/")
+# Card folders, matched in any case: on Windows resolve() gives a folder's case on disk (an old clone's may differ).
+TOPS = ("creatures/", "items/", "field/", "n.m.e/", "auxiliary/", "mdw/the morgue/")
 BAD = re.compile(r'[\x00-\x1f\\:*?"<>|]')
 RESERVED = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.I)
 
 
 def card_path(rel, exts):
     """rel, by its text alone, is a card PSD/PNG repo path."""
-    return (isinstance(rel, str) and 0 < len(rel) <= 240 and rel.startswith(TOPS) and rel.lower().endswith(exts)
+    return (isinstance(rel, str) and 0 < len(rel) <= 240 and rel.lower().startswith(TOPS) and rel.lower().endswith(exts)
             and not BAD.search(rel) and not any(s in ("", ".", "..") or s != s.strip() or s.endswith(".")
                                                 or RESERVED.fullmatch(s) for s in rel.split("/")))
 

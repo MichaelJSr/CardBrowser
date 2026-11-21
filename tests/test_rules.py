@@ -86,6 +86,15 @@ def test_card_file_refuses(tmp_path, rel):
     assert cardbrowser.card_file(tmp_path, rel, (".psd", ".png")) is None
 
 
+def test_card_file_takes_the_case_on_disk(tmp_path, monkeypatch):
+    """Windows' resolve() gives a folder's case on disk: an old clone's 'creatures' folder still holds card files."""
+    real = Path.resolve
+    monkeypatch.setattr(Path, "resolve", lambda self, strict=False: Path(
+        *("creatures" if part == "Creatures" else part for part in real(self, strict).parts)))
+    got = cardbrowser.card_file(tmp_path, "Creatures/Everhood/5 Stars/x.psd", (".psd",))
+    assert got is not None and got.parts[-4] == "creatures"
+
+
 def test_card_file_extension_per_call(tmp_path):
     assert cardbrowser.card_file(tmp_path, ODD[0], (".png",)) is None
     assert cardbrowser.card_file(tmp_path, ODD[1], (".psd",)) is None
@@ -162,6 +171,44 @@ def test_windows_never_loads_mshtml(tmp_path, monkeypatch):
     with pytest.raises(Exit):
         guards._install_win()
     assert "webview.platforms.winforms" not in sys.modules
+
+
+def test_gtk_never_loads_srcdoc_frames(monkeypatch):
+    """WebKitGTK's bridge gives no sender frame, so on Linux no srcdoc frame loads; site pages and blank frames do."""
+    import sys
+    import types
+
+    class Decision:                                   # WebKitGTK's NavigationPolicyDecision, action and request in one
+        def __init__(self, url):
+            self.url, self.ignored = url, False
+
+        def get_navigation_action(self):
+            return self
+        get_request = get_navigation_action
+
+        def get_uri(self):
+            return self.url
+
+        def get_navigation_type(self):
+            return 0
+
+        def ignore(self):
+            self.ignored = True
+
+    class BrowserView:
+        def on_navigation(self, wv, decision, kind):
+            return "engine"
+
+        def on_js_bridge_call(self, manager, message):
+            pass
+    webkit = types.SimpleNamespace(NavigationPolicyDecision=Decision, NavigationType=types.SimpleNamespace(LINK_CLICKED=1))
+    monkeypatch.setitem(sys.modules, "webview.platforms.gtk", types.SimpleNamespace(BrowserView=BrowserView, webkit=webkit))
+    monkeypatch.setattr(guards, "PATCHED", [])
+    guards._install_gtk()
+    for url, ok in ((SITE + "c/z/", True), ("about:blank", True), ("blob:https://michaeljsr.github.io/5f1c", True),
+                    ("about:srcdoc", False), ("https://evil.example/", False)):
+        d = Decision(url)
+        assert (BrowserView().on_navigation(None, d, 0) == "engine") is ok and d.ignored is not ok, url
 
 
 class FakeWindow:
@@ -406,6 +453,7 @@ def test_mac_commands(effects, monkeypatch):
     assert effects[-1] == ["/usr/bin/open", str(P)]
 
 
+@pytest.mark.skipif(os.name != "posix", reason="a Linux path has no drive: as_uri() refuses it on Windows")
 def test_linux_commands(effects, monkeypatch):
     monkeypatch.setattr(actions, "OS", "linux")
     q = Path("/home/x/TTSCardMaker/Items/Equip/1 Stars/Bone's_Loans.png")

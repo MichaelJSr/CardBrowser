@@ -39,7 +39,6 @@ ATTACKS = ["../x.psd", "/etc/x.psd", "C:/x.psd", "Creatures\\..\\x.psd", "Creatu
            "MDW/Linked/x.png", "Types/x.png", "Creatures/x.txt", "Creatures/a/CON.psd", "",
            "Creatures/" + "a" * 227 + ".psd"] + ([OUT_LINK, *IN_LINKS] if os.name == "posix" else [])
 PATCHES = {"mac": 4, "win": 5, "linux": 4}[OS]
-CLICK_OPENS = OS != "win"            # WebView2: a script's click is no user gesture, so its links never leave
 LABELS = {"mac": ["Open in Photoshop", "Show in Finder", "Copy PNG"], "win": ["Open in Photoshop", "Show in Explorer",
           "Copy PNG"], "linux": ["Open PSD", "Show in folder", "Copy PNG"]}[OS]
 STALE = 600                          # a self-test ends within 120 s (watchdog): older temp folders are from runs that died
@@ -276,7 +275,7 @@ class Harness:
         cardbrowser._recent.clear()
         self.js(f"document.querySelector('#modal .card-app-say').textContent = ''; "
                 f"document.querySelectorAll('#modal .card-app button')[{i}].click(); 1")
-        self.until("(t => !!t && t !== '\u2026')(document.querySelector('#modal .card-app-say').textContent)")
+        self.until("(t => !!t && t !== '\\u2026')(document.querySelector('#modal .card-app-say').textContent)")
         said = self.js("document.querySelector('#modal .card-app-say').textContent")
         self.replies.append(said)
         return said
@@ -295,6 +294,12 @@ class Harness:
 
     def url(self):
         return self.w.get_current_url()
+
+
+def went_out(got, url, link=True):
+    """Right for a scripted navigation to url: a link click opens url in the system browser, a location change opens
+    nothing. Windows: either, as WebView2 decides whether a script's click is the user's (never another URL)."""
+    return got == ([("browser", url)] if link else []) or (OS == "win" and got in ([], [("browser", url)]))
 
 
 def expect_open(p):
@@ -567,20 +572,20 @@ def steps_body(h, rec, S, O, site, root, step, window):
     guards._opened.clear()
     h.js("document.getElementById('same').click(); 1")
     time.sleep(1.0)
-    want = [("browser", O.url + "/other.html")] if CLICK_OPENS else []
     got = rec.take()
-    if h.url() != home or got != want:
+    gesture = bool(got)                                # Windows: did WebView2 take the script's click as the user's?
+    if h.url() != home or not went_out(got, O.url + "/other.html"):
         bad.append(f"same-window link {len(got)}")
     for target in (O.url + "/other.html", S.url + "/Other/", "file:///etc/hosts", "data:text/html,hi"):
         h.js(f"location.href = {json.dumps(target)}; 1")
         time.sleep(0.8)
         got = rec.take()
-        if h.url() != home or got or not h.js("window.__cardBrowser === true"):
+        if h.url() != home or not went_out(got, target, link=False) or not h.js("window.__cardBrowser === true"):
             bad.append(f"{target.split(':')[0]} {target[-12:]}")
     h.js("document.getElementById('blank').click(); 1")
     time.sleep(0.8)
     got = rec.take()
-    if got != ([("browser", O.url + "/blank.html")] if CLICK_OPENS else []):
+    if not went_out(got, O.url + "/blank.html"):
         bad.append(f"_blank {len(got)}")
     h.js("document.getElementById('bfile').click(); document.getElementById('bms').click(); 1")
     time.sleep(0.8)
@@ -592,16 +597,18 @@ def steps_body(h, rec, S, O, site, root, step, window):
         bad.append("print: no note")
     if rec.take():
         bad.append("print: reached the browser")
-    step("ST9", "navigation", not bad and h.url() == home, "; ".join(bad) or "stayed on the site")
-    # ST10: frames never reach the bridge (and another origin's frame never loads on macOS/Linux)
-    calls, refused0 = len(rec.calls), sum("sender refused" in m for m in rec.logs)
+    step("ST9", "navigation", not bad and h.url() == home, ("; ".join(bad) or "stayed on the site")
+         + (f"; script clicks open links: {'yes' if gesture else 'no'}" if OS == "win" else ""))
+    # ST10: frames never reach the bridge (another origin's frame never loads on macOS/Linux; Linux: no srcdoc frame)
+    count = lambda text: sum(text in m for m in rec.logs)
+    calls, refused0, srcdoc0 = len(rec.calls), count("sender refused"), count("navigation: refused about")
     ok = h.load(site + "frames.html")
     time.sleep(1.5)
     o_frame = "/frame.html" in O.seen
-    refused = sum("sender refused" in m for m in rec.logs) - refused0
-    step("ST10", "frames", ok and len(rec.calls) == calls and (OS == "win" or not o_frame) and (OS != "mac" or refused >= 1),
-         f"api calls +{len(rec.calls) - calls}, other origin's frame {'loaded' if o_frame else 'cancelled'}, "
-         f"{refused} sender refused")
+    refused, srcdoc = count("sender refused") - refused0, count("navigation: refused about") - srcdoc0
+    step("ST10", "frames", ok and len(rec.calls) == calls and (OS == "win" or not o_frame) and (OS != "mac" or refused >= 1)
+         and (OS != "linux" or srcdoc >= 1), f"api calls +{len(rec.calls) - calls}, other origin's frame "
+         f"{'loaded' if o_frame else 'cancelled'}, {refused} sender refused, {srcdoc} srcdoc frame refused")
     # ST12: a site version without the hook
     ok = h.load(site + "nohook.html")
     n1 = h.js("document.querySelectorAll('.card-app-missing').length")
@@ -626,7 +633,7 @@ def steps_body(h, rec, S, O, site, root, step, window):
     none = h.js("document.querySelectorAll('.card-app-update').length") == 0
     tag_url = "https://github.com/MichaelJSr/CardBrowser/releases/tag/"
     step("ST13", "update note", ok and "v99.0.0" in text and "v100" not in text and href == tag_url + "v99.0.0"
-         and opened == ([("browser", href)] if CLICK_OPENS else []) and none and first,
+         and went_out(opened, href) and none and first,
          f"{text.strip()[:60]}; old list: {'no note' if none else 'NOTE'}; first load's list {'local' if first else 'NOT local'}")
     # ST17: a reply that lands after a full reload: one log line (no stderr traceback), the next click works
     real, late0 = actions.reveal, sum("thread: JavascriptException" in m for m in rec.logs)

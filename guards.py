@@ -217,7 +217,8 @@ def _install_gtk():
             if type(decision) is P.webkit.NavigationPolicyDecision:
                 action = decision.get_navigation_action()
                 url = action.get_request().get_uri()
-                if not frame_ok(url):
+                if not frame_ok(url) or url == "about:srcdoc":  # the bridge has no sender frame here: no srcdoc frames
+                    log.info("navigation: refused %s", str(url).split(":", 1)[0][:20])
                     if action.get_navigation_type() == P.webkit.NavigationType.LINK_CLICKED:
                         outside(url)
                     decision.ignore()

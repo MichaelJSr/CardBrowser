@@ -1,6 +1,7 @@
 // CardBrowser's page side: run after every site page load. The site's hook (TTSCardMaker site/assets/app.js appHook):
 // openCard puts an empty div.card-app (data-file-psd / data-file-png: repo paths) in #modal .image-wrap and fires
 // "card-dialog" on document with detail {id, psd, png, slot}. This fills the slot with three buttons. DOM by textContent only.
+// ASCII only (\u escapes): on Linux pywebview gives WebKitGTK the length in characters, which it reads as bytes.
 (() => {
   if (window.__cardBrowser) return;
   window.__cardBrowser = true;
@@ -19,7 +20,7 @@
         say.textContent = "CardBrowser can't reach this page: use Reload in the CardBrowser menu.";
         return;
       }
-      say.textContent = "…";
+      say.textContent = "\u2026";
       try {
         let r;
         for (const rel of rels) if (!(r = await api[call](rel)).missing) break;   // Show: the PSD when the PNG isn't pulled
@@ -63,7 +64,7 @@
     box.className = cls; box.setAttribute("role", "status"); box.style.cssText = NOTE;
     box.append(...parts);
     const x = document.createElement("button");
-    x.type = "button"; x.textContent = "✕"; x.setAttribute("aria-label", "Close");
+    x.type = "button"; x.textContent = "\u2715"; x.setAttribute("aria-label", "Close");
     x.style.cssText = "padding:0 6px;border:0;background:transparent;color:inherit;cursor:pointer";
     x.addEventListener("click", () => box.remove());
     box.append(x);

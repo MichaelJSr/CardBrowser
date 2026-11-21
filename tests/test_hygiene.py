@@ -103,5 +103,7 @@ def test_write_finder_finds():
 def test_inject_builds_dom_by_text_only():
     js = (REPO / "inject.js").read_text(encoding="utf-8")
     assert js.count("%CONFIG%") == 1
+    for name in ("inject.js", "selftest.py"):        # GTK: pywebview's script length is in characters, WebKit reads bytes
+        assert (REPO / name).read_text(encoding="utf-8").isascii(), f"{name}: write \\u escapes"
     for bad in ("inner" + "HTML", "outer" + "HTML", "insertAdjacent" + "HTML", "document." + "write", "ev" + "al(", "data-" + "action"):
         assert bad not in js
