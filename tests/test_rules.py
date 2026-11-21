@@ -102,8 +102,66 @@ def test_card_file_refuses_a_link_out(tmp_path):
     assert cardbrowser.card_file(root, "Creatures/Dir/secret.png", (".png",)) is None
 
 
+@pytest.mark.skipif(os.name != "posix", reason="symlinks")
+def test_card_file_link_inside_must_land_on_a_card(tmp_path):
+    root = tmp_path / "TTSCardMaker"
+    for d in ("Creatures/Other/1 Stars", "tools", ".git", "Items/Heal", "Types"):
+        (root / d).mkdir(parents=True)
+    for f in ("tools/run.command", ".git/config", "Items/Heal/Real.psd", "Items/Heal/Real.png", "Types/x.png"):
+        (root / f).write_bytes(b"x")
+    links = {"Creatures/Other/1 Stars/Evil.psd": "../../../tools/run.command", "Creatures/Cfg.png": "../.git/config",
+             "Creatures/Pic.psd": "../Items/Heal/Real.png", "Creatures/Type.png": "../Types/x.png",
+             "Creatures/Same.psd": "../Items/Heal/Real.psd", "Creatures/Dir": ".."}
+    for link, target in links.items():
+        (root / link).symlink_to(target)
+    for rel in ("Creatures/Other/1 Stars/Evil.psd", "Creatures/Cfg.png", "Creatures/Type.png",
+                "Creatures/Dir/Types/x.png", "Creatures/Dir/tools/run.psd"):
+        assert cardbrowser.card_file(root, rel, (".psd", ".png")) is None, rel
+    real = root.resolve() / "Items/Heal/Real.psd"
+    assert cardbrowser.card_file(root, "Creatures/Same.psd", (".psd",)) == real                 # another card file
+    assert cardbrowser.card_file(root, "Creatures/Dir/Items/Heal/Real.psd", (".psd",)) == real
+    assert cardbrowser.card_file(root, "Creatures/Same.psd", (".png",)) is None
+    assert cardbrowser.card_file(root, "Creatures/Pic.psd", (".psd",)) is None                 # open_psd: a PNG is no PSD
+
+
 def test_live_paths_rule_length():
     assert cardbrowser.card_file("/", "Creatures/" + "a" * 226 + ".psd", (".psd",)) is not None   # 240 is fine
+
+
+def test_page_url_takes_the_escaped_form():
+    class Uri:                                        # WebView2's System.Uri: str() unescapes
+        AbsoluteUri = "https://michaeljsr.github.io/TTSCardMaker/#/cards?q=mini%20doomer"
+
+        def __str__(self):
+            return "https://michaeljsr.github.io/TTSCardMaker/#/cards?q=mini doomer"
+
+    class Win:
+        def __init__(self, u):
+            self.u = u
+
+        def get_current_url(self):
+            return self.u
+    assert cardbrowser.page_url(Win(Uri())) == Uri.AbsoluteUri and guards.outside(cardbrowser.page_url(Win(Uri())))
+    assert cardbrowser.page_url(Win(SITE)) == SITE and cardbrowser.page_url(Win(None)) == "" == cardbrowser.page_url(None)
+
+
+def test_windows_never_loads_mshtml(tmp_path, monkeypatch):
+    """No WebView2: pywebview's winforms imports mshtml and writes IE mode to the registry; guards stops that import."""
+    import sys
+    import webview.platforms
+    (tmp_path / "winforms.py").write_text("from . import mshtml as IE\nIE._set_ie_mode()\nrenderer = 'mshtml'\n")
+    (tmp_path / "mshtml.py").write_text("def _set_ie_mode():\n    raise AssertionError('IE mode written')\n")
+    monkeypatch.setattr(webview.platforms, "__path__", [str(tmp_path)])
+    monkeypatch.delitem(sys.modules, "webview.platforms.winforms", raising=False)
+    monkeypatch.setitem(sys.modules, guards.MSHTML, None)          # removed again after the test
+    del sys.modules[guards.MSHTML]                                  # so only guards can block the import
+
+    class Exit(Exception):
+        pass
+    monkeypatch.setattr(guards, "need_webview2", lambda: (_ for _ in ()).throw(Exit()))
+    with pytest.raises(Exit):
+        guards._install_win()
+    assert "webview.platforms.winforms" not in sys.modules
 
 
 # ---- the bridge gate ----

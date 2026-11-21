@@ -132,20 +132,40 @@ def _install_mac():
     return P
 
 
+MSHTML = "webview.platforms.mshtml"
+
+
 def _install_win():
-    from webview.platforms import winforms
-    if winforms.renderer != "edgechromium":           # pywebview would silently use IE
+    sys.modules[MSHTML] = None                          # never IE: importing it writes IE mode to the registry
+    try:
+        from webview.platforms import winforms
+    except ImportError as e:                            # no WebView2: winforms reached for IE
+        if e.name != MSHTML:
+            raise
+        need_webview2()
+    if winforms.renderer != "edgechromium":
         need_webview2()
     from webview.platforms import edgechromium as P
-    nav, notify = P.EdgeChrome.on_navigation_start, P.EdgeChrome.on_script_notify
+    E = P.EdgeChrome
+    nav, notify, new = E.on_navigation_start, E.on_script_notify, E.on_new_window_request
 
-    def on_navigation_start(self, sender, args):       # main frame only
-        url = str(args.Uri)
-        if frame_ok(url):
+    def on_navigation_start(self, sender, args):       # main frame only; never raises into .NET
+        try:
+            url = str(args.Uri)
+            ok = frame_ok(url)
+            if not ok:
+                args.Cancel = True
+                if args.IsUserInitiated:
+                    outside(url)
+        except Exception as e:                          # noqa: BLE001
+            log.warning("navigation: %s", type(e).__name__)
+            ok = False
+            try:
+                args.Cancel = True
+            except Exception:                           # noqa: BLE001
+                pass
+        if ok:
             return nav(self, sender, args)
-        args.Cancel = True
-        if args.IsUserInitiated:
-            outside(url)
 
     def on_script_notify(self, sender, args):
         try:
@@ -155,8 +175,21 @@ def _install_win():
         except Exception as e:                          # noqa: BLE001
             log.warning("bridge: bad message (%s)", type(e).__name__)
 
-    P.EdgeChrome.on_navigation_start, P.EdgeChrome.on_script_notify = on_navigation_start, on_script_notify
-    PATCHED.extend(["on_navigation_start", "on_script_notify"])
+    def on_new_window_request(self, sender, args):     # target=_blank, window.open: only a click leaves (as on macOS)
+        try:
+            if args.IsUserInitiated:
+                return new(self, sender, args)
+            log.warning("new window: not a click")
+        except Exception as e:                          # noqa: BLE001
+            log.warning("new window: %s", type(e).__name__)
+        try:
+            args.set_Handled(True)                      # no window; window.open() gets null
+        except Exception:                               # noqa: BLE001
+            pass
+
+    E.on_navigation_start, E.on_script_notify, E.on_new_window_request = (on_navigation_start, on_script_notify,
+                                                                          on_new_window_request)
+    PATCHED.extend(["on_navigation_start", "on_script_notify", "on_new_window_request"])
     return P
 
 
@@ -179,15 +212,23 @@ def _install_gtk():
                  "python3-gobject webkit2gtk4.1")
     nav, bridge = P.BrowserView.on_navigation, P.BrowserView.on_js_bridge_call
 
-    def on_navigation(self, wv, decision, kind):        # main frames and subframes
-        if type(decision) is P.webkit.NavigationPolicyDecision:
-            action = decision.get_navigation_action()
-            url = action.get_request().get_uri()
-            if not frame_ok(url):
-                if action.get_navigation_type() == P.webkit.NavigationType.LINK_CLICKED:
-                    outside(url)
+    def on_navigation(self, wv, decision, kind):        # main frames and subframes; never raises into GTK
+        try:
+            if type(decision) is P.webkit.NavigationPolicyDecision:
+                action = decision.get_navigation_action()
+                url = action.get_request().get_uri()
+                if not frame_ok(url):
+                    if action.get_navigation_type() == P.webkit.NavigationType.LINK_CLICKED:
+                        outside(url)
+                    decision.ignore()
+                    return True
+        except Exception as e:                          # noqa: BLE001
+            log.warning("navigation: %s", type(e).__name__)
+            try:
                 decision.ignore()
-                return True
+            except Exception:                           # noqa: BLE001
+                pass
+            return True
         return nav(self, wv, decision, kind)
 
     def on_js_bridge_call(self, manager, message):      # WebKitGTK gives no sender: the main frame's URI

@@ -93,16 +93,22 @@ BAD = re.compile(r'[\x00-\x1f\\:*?"<>|]')
 RESERVED = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.I)
 
 
+def card_path(rel, exts):
+    """rel, by its text alone, is a card PSD/PNG repo path."""
+    return (isinstance(rel, str) and 0 < len(rel) <= 240 and rel.startswith(TOPS) and rel.lower().endswith(exts)
+            and not BAD.search(rel) and not any(s in ("", ".", "..") or s != s.strip() or s.endswith(".")
+                                                or RESERVED.fullmatch(s) for s in rel.split("/")))
+
+
 def card_file(root, rel, exts):
     """The card file `rel` (a repo path from the site) inside root, or None when it is not a card PSD/PNG path."""
-    if not (isinstance(rel, str) and 0 < len(rel) <= 240 and rel.startswith(TOPS) and rel.lower().endswith(exts)) \
-            or BAD.search(rel):
-        return None
-    if any(s in ("", ".", "..") or s != s.strip() or s.endswith(".") or RESERVED.fullmatch(s) for s in rel.split("/")):
+    if not card_path(rel, exts):
         return None
     root = Path(root).resolve()
-    p = root.joinpath(*rel.split("/")).resolve()      # follows links: one pointing out of the folder is refused
-    return p if p.is_relative_to(root) and p != root else None
+    p = root.joinpath(*rel.split("/")).resolve()      # follows links
+    if not p.is_relative_to(root):                    # a link out of the folder
+        return None
+    return p if card_path(p.relative_to(root).as_posix(), exts) else None   # a link in must land on a card file too
 
 
 # ---- the folder ----
@@ -233,9 +239,15 @@ def inject_script():
     return (HERE / "inject.js").read_text(encoding="utf-8").replace("%CONFIG%", json.dumps(cfg))
 
 
+def page_url(window):
+    """The window's URL as text (WebView2 gives a System.Uri, whose str() unescapes: %20 becomes a space)."""
+    u = window.get_current_url() if window else None
+    return str(getattr(u, "AbsoluteUri", u) or "")
+
+
 def on_loaded(window):
     """After every main-frame load (pywebview's API is in): the page side, on site pages only. Off the main thread."""
-    if guards.on_site(window.get_current_url()):
+    if guards.on_site(page_url(window)):
         window.run_js(inject_script())
 
 
@@ -258,7 +270,7 @@ def menus():
     return [Menu(NAME, [
         MenuAction("Choose TTSCardMaker folder…", choose_folder),
         MenuAction("Reload", lambda: _window and _window.run_js("location.reload()")),
-        MenuAction("Open this page in my browser", lambda: _window and guards.outside(_window.get_current_url())),
+        MenuAction("Open this page in my browser", lambda: _window and guards.outside(page_url(_window))),
         MenuSeparator(),
         MenuAction("Show log", lambda: actions.reveal(app_home() / "cardbrowser.log")),
     ])]

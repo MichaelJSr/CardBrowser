@@ -74,10 +74,13 @@ def test_edgechromium_points():
     assert {"webbrowser", "js_bridge_call"} <= imported(mod)
     m = methods(classes(mod)["EdgeChrome"])
     assert m["on_navigation_start"] == ["self", "sender", "args"] and m["on_script_notify"] == ["self", "_", "args"]
-    assert "on_new_window_request" in m
+    assert m["on_new_window_request"] == ["self", "sender", "args"]
     src = (ROOT / "platforms/edgechromium.py").read_text(encoding="utf-8")
     assert "NavigationStarting += self.on_navigation_start" in src and "WebMessageReceived += self.on_script_notify" in src
-    assert "renderer" in (ROOT / "platforms/winforms.py").read_text(encoding="utf-8")
+    assert "NewWindowRequested += self.on_new_window_request" in src
+    win = (ROOT / "platforms/winforms.py").read_text(encoding="utf-8")
+    assert "renderer = 'edgechromium'" in win
+    assert win.index("from . import mshtml as IE") < win.index("IE._set_ie_mode()")   # guards blocks that import first
 
 
 def test_gtk_points():

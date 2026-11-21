@@ -30,9 +30,13 @@ CARDS = {"chris-jordi": ("Creatures/Everhood/5 Stars/Chris_&_Jordi.psd", "Creatu
          "cho-gath": ("MDW/The Morgue/Cho'Gath.psd", "MDW/The Morgue/Cho'Gath.png")}
 GHOST = ("Creatures/Other/1 Stars/Ghost.psd", "Creatures/Other/1 Stars/Ghost.png")       # not in the folder
 OUT_LINK = "Creatures/Other/5 Stars/Out.png"                                               # a link out of the folder
+IN_LINKS = {"Creatures/Other/1 Stars/Evil.psd": "../../../tools/run.command",               # links to non-card files
+            "Creatures/Other/5 Stars/Cfg.png": "../../../.git/config"}
 ATTACKS = ["../x.psd", "/etc/x.psd", "C:/x.psd", "Creatures\\..\\x.psd", "Creatures/a.psd:s.psd", ".git/x.psd",
            "MDW/Linked/x.png", "Types/x.png", "Creatures/x.txt", "Creatures/a/CON.psd", "",
-           "Creatures/" + "a" * 227 + ".psd"] + ([OUT_LINK] if os.name == "posix" else [])
+           "Creatures/" + "a" * 227 + ".psd"] + ([OUT_LINK, *IN_LINKS] if os.name == "posix" else [])
+PATCHES = {"mac": 4, "win": 5, "linux": 4}[OS]
+CLICK_OPENS = OS != "win"            # WebView2: a script's click is no user gesture, so its links never leave
 LABELS = {"mac": ["Open in Photoshop", "Show in Finder", "Copy PNG"], "win": ["Open in Photoshop", "Show in Explorer",
           "Copy PNG"], "linux": ["Open PSD", "Show in folder", "Copy PNG"]}[OS]
 
@@ -61,6 +65,13 @@ def make_fixture(root):
         outside = root.parent / "outside.png"
         outside.write_bytes(png_bytes(9))
         root.joinpath(*OUT_LINK.split("/")).symlink_to(outside)
+        for d, f in (("tools", "run.command"), (".git", "config")):
+            (root / d).mkdir(exist_ok=True)
+            (root / d / f).write_bytes(b"not a card")
+        for link, target in IN_LINKS.items():
+            p = root.joinpath(*link.split("/"))
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.symlink_to(target)
 
 
 def snapshot(root):
@@ -271,13 +282,16 @@ class Harness:
 
 
 def expect_open(p):
+    """(what Open records, how its reply starts) on this OS."""
     p = str(p)
     if OS == "mac":
-        return [("call", ["/usr/bin/open", "-b", actions.PS_BUNDLE, p])]
+        return [("call", ["/usr/bin/open", "-b", actions.PS_BUNDLE, p])], "Opening"
     if OS == "win":
         how, exe = actions.win_photoshop()
-        return [("spawn", [exe, p])] if how == "exe" else [("startfile", p)]
-    return [("spawn", ["xdg-open", p])]
+        if how == "exe":
+            return [("spawn", [exe, p])], "Opening"
+        return [("startfile", p)], "Opening" if how == "assoc" else actions.NO_PS     # no Photoshop: the default app
+    return [("spawn", ["xdg-open", p])], "Opening"
 
 
 def expect_reveal(p):
@@ -347,6 +361,7 @@ def run(opts):
     site = S.url + "/TTSCardMaker/"
     cardbrowser.setup_logging()
     cardbrowser.save_settings({"folder": str(clone)})
+    cardbrowser._first, cardbrowser.RELEASES = True, site + "releases-old.json"      # offline: never GitHub
     report = {"app": cardbrowser.VERSION, "os": OS, "python": platform.python_version(), "machine": platform.machine(),
               "pywebview": pywebview_version(), "mode": "ci" if opts["ci"] else "safe", "steps": []}
     steps = report["steps"]
@@ -416,7 +431,7 @@ def steps_body(h, rec, S, O, site, root, step, window):
         getattr(guards.PLATFORM, "webbrowser", None).open is guards.outside
     version = pywebview_version()
     step("ST1", "engine + pins", ok and renderer == guards.ENGINE[OS] and version == "6.2.1" and gated
-         and len(guards.PATCHED) == 4, f"renderer {renderer}, pywebview {version}, patched {guards.PATCHED}")
+         and len(guards.PATCHED) == PATCHES, f"renderer {renderer}, pywebview {version}, patched {guards.PATCHED}")
     # ST2: the dialog opened before pywebview attached gets its buttons late
     b = h.buttons()
     say = h.js("document.querySelectorAll('#modal .card-app .card-app-say').length")
@@ -436,7 +451,8 @@ def steps_body(h, rec, S, O, site, root, step, window):
         P, G = root.joinpath(*psd.split("/")), root.joinpath(*png.split("/"))
         said = h.click(0)
         got = rec.take()
-        if got != expect_open(P) or not said.startswith("Opening"):
+        want, says = expect_open(P)
+        if got != want or not said.startswith(says):
             bad.append(f"open {cid}: {said} {len(got)}")
         said = h.click(1)
         got = rec.take()
@@ -492,7 +508,7 @@ def steps_body(h, rec, S, O, site, root, step, window):
     guards._opened.clear()
     h.js("document.getElementById('same').click(); 1")
     time.sleep(1.0)
-    want = [] if OS == "win" else [("browser", O.url + "/other.html")]
+    want = [("browser", O.url + "/other.html")] if CLICK_OPENS else []
     got = rec.take()
     if h.url() != home or got != want:
         bad.append(f"same-window link {len(got)}")
@@ -505,7 +521,7 @@ def steps_body(h, rec, S, O, site, root, step, window):
     h.js("document.getElementById('blank').click(); 1")
     time.sleep(0.8)
     got = rec.take()
-    if got != [("browser", O.url + "/blank.html")]:
+    if got != ([("browser", O.url + "/blank.html")] if CLICK_OPENS else []):
         bad.append(f"_blank {len(got)}")
     h.js("document.getElementById('bfile').click(); document.getElementById('bms').click(); 1")
     time.sleep(0.8)
@@ -528,7 +544,8 @@ def steps_body(h, rec, S, O, site, root, step, window):
     time.sleep(0.3)
     n2 = h.js("document.querySelectorAll('.card-app-missing').length")
     step("ST12", "missing hook", ok and n1 == 1 and n2 == 1 and not h.buttons(), f"note {n1}, after a re-render {n2}")
-    # ST13: the update note (and none when nothing is newer)
+    # ST13: the update note (and none when nothing is newer); the first load asked the loopback list, never GitHub
+    first = "/TTSCardMaker/releases-old.json" in S.seen
     cardbrowser._first, cardbrowser.RELEASES = True, site + "releases.json"
     ok = h.load(site) and h.until("!!document.querySelector('.card-app-update a')")
     text = h.js("(document.querySelector('.card-app-update') || {}).textContent || ''")
@@ -544,10 +561,11 @@ def steps_body(h, rec, S, O, site, root, step, window):
     none = h.js("document.querySelectorAll('.card-app-update').length") == 0
     tag_url = "https://github.com/MichaelJSr/CardBrowser/releases/tag/"
     step("ST13", "update note", ok and "v99.0.0" in text and "v100" not in text and href == tag_url + "v99.0.0"
-         and opened == [("browser", href)] and none, f"{text.strip()[:60]}; old list: {'no note' if none else 'NOTE'}")
+         and opened == ([("browser", href)] if CLICK_OPENS else []) and none and first,
+         f"{text.strip()[:60]}; old list: {'no note' if none else 'NOTE'}; first load's list {'local' if first else 'NOT local'}")
     # ST11: nothing the page or log saw holds a path or a traceback
     log_text = (cardbrowser.app_home() / "cardbrowser.log").read_text(encoding="utf-8")
-    seen = json.dumps([r for r in h.replies]) + log_text + "\n".join(rec.logs)
+    seen = "\n".join(map(str, h.replies)) + log_text + "\n".join(rec.logs)      # raw text: JSON doubles backslashes
     leaks = [w for w in (str(root), str(root.parent), str(Path.home()), "Traceback") if w and w in seen]
     step("ST11", "no leaks", not leaks and h.replies, f"{len(h.replies)} replies + log checked")
 

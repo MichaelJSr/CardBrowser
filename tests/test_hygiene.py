@@ -21,7 +21,7 @@ def tracked():
 
 
 SECRETS = [re.compile(p) for p in (
-    "/" + "Users/[A-Za-z]", r"C:\\\\" + r"Users\\\\[^<]", "gh" + "[pousr]_[A-Za-z0-9]{20}", "github" + "_pat_",
+    "/" + "Users/[A-Za-z]", r"C:\\" + r"Users\\[^<]", "gh" + "[pousr]_[A-Za-z0-9]{20}", "github" + "_pat_",
     "discord" + r"(app)?\.com/api/web" + "hooks", "xo" + "x[abprs]-", "AK" + "IA[0-9A-Z]{16}", "-----BEGIN [A-Z ]*PRIV" + "ATE KEY",
     "discord" + r"(app)?\.com/channels/", "co-" + "authored-by", "clau" + "de", "anthro" + "pic")]
 
@@ -33,6 +33,12 @@ def test_no_secrets_paths_or_attribution(path):
     text = path.read_text(encoding="utf-8", errors="replace")
     for p in SECRETS:
         assert not p.search(text if "clau" not in p.pattern and "anthro" not in p.pattern else text.lower()), p.pattern
+
+
+def test_patterns_find():
+    mac, win = "/" + "Users/me/x", "C:" + "\\" + "Users" + "\\" + "me" + "\\x"
+    assert SECRETS[0].search(mac) and SECRETS[1].search(win)
+    assert not SECRETS[1].search(win.replace("me", "<you>")) and not SECRETS[1].search(win.replace("\\", "\\\\"))
 
 
 def calls(src):
