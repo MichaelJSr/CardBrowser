@@ -164,6 +164,69 @@ def test_windows_never_loads_mshtml(tmp_path, monkeypatch):
     assert "webview.platforms.winforms" not in sys.modules
 
 
+class FakeWindow:
+    """pywebview's Window as the menu uses it: loaded event, run_js, load_url, get_current_url (waits when not loaded)."""
+    def __init__(self, url):
+        import threading
+        self.events = type("E", (), {"loaded": threading.Event()})()
+        self.url, self.did = url, []
+
+    def run_js(self, js):
+        self.did.append(("run_js", js))
+
+    def load_url(self, url):
+        self.did.append(("load_url", url))
+
+    def get_current_url(self):
+        assert self.events.loaded.is_set(), "would wait 20 s, then raise"
+        return self.url
+
+
+def test_menu_recovers_a_window_that_never_loaded(monkeypatch):
+    opened = []
+    monkeypatch.setattr(guards, "_browser", opened.append)
+    w = FakeWindow(SITE + "#/card/a-snack2")
+    monkeypatch.setattr(cardbrowser, "_window", w)
+    monkeypatch.setattr(cardbrowser, "_start", SITE)
+    cardbrowser.reload()                             # offline at start: no page, no API
+    cardbrowser.in_browser()
+    assert w.did == [("load_url", SITE)] and opened == [SITE]
+    w.events.loaded.set()
+    w.did, opened[:] = [], []
+    cardbrowser.reload()                             # a site page: a real reload keeps its hash
+    cardbrowser.in_browser()
+    assert w.did == [("run_js", "location.reload()")] and opened == [SITE + "#/card/a-snack2"]
+    w.url, w.did = "about:blank", []
+    cardbrowser.reload()
+    assert w.did == [("load_url", SITE)]
+
+
+def test_thread_errors_go_to_the_log(clone, monkeypatch, capsys):
+    import threading
+    monkeypatch.setattr(threading, "excepthook", cardbrowser.thread_error)
+
+    def late_reply():
+        raise ValueError(f"callback gone in {clone}")
+    t = threading.Thread(target=late_reply)
+    t.start()
+    t.join()
+    log = (cardbrowser.app_home() / "cardbrowser.log").read_text(encoding="utf-8")
+    assert "thread: ValueError at test_rules.py:" in log and str(clone) not in log
+    assert capsys.readouterr().err == ""
+
+
+def test_selftest_sweeps_only_its_dead_folders(tmp_path):
+    import selftest
+    old, new, other = (tmp_path / n for n in ("cardbrowser-selftest-old", "cardbrowser-selftest-new", "other-old"))
+    for d in (old, new, other):
+        (d / "home").mkdir(parents=True)
+    then = time.time() - selftest.STALE - 60
+    for d in (old, other):
+        os.utime(d, (then, then))
+    selftest.sweep(tmp_path)
+    assert not old.exists() and new.exists() and other.exists()
+
+
 # ---- the bridge gate ----
 @pytest.mark.parametrize("name,params,vid,passes", [
     ("open_psd", ["Items/x.psd"], "123456789", True), ("reveal", [""], "5e-7", True), ("copy_png", ["x" * 1024], "1", True),
@@ -249,7 +312,7 @@ def test_act_messages(clone, monkeypatch):
     got = api.open_psd("Items/Heal/2 Stars/A_Snack.psd")
     assert got == {"ok": True, "msg": "Opening in Photoshop…"}
     assert ran == [["/usr/bin/open", "-b", "com.adobe.Photoshop", str(clone.resolve() / "Items/Heal/2 Stars/A_Snack.psd")]]
-    assert api.open_psd("Items/Heal/2 Stars/Gone.psd")["msg"] == cardbrowser.NOT_YET
+    assert api.open_psd("Items/Heal/2 Stars/Gone.psd") == {"ok": False, "msg": cardbrowser.NOT_YET, "missing": True}
     assert api.open_psd("../x.psd")["msg"] == cardbrowser.NOT_CARD
     assert api.open_psd("Items/Heal/2 Stars/A_Snack2.png")["msg"] == cardbrowser.NOT_CARD
     assert api.reveal("Items/Heal/2 Stars/A_Snack2.png")["msg"] == "Showing it in Finder."

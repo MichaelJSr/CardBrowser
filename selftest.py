@@ -29,6 +29,7 @@ CARDS = {"chris-jordi": ("Creatures/Everhood/5 Stars/Chris_&_Jordi.psd", "Creatu
          "a-snack2": ("Items/Heal/2 Stars/A_Snack.psd", "Items/Heal/2 Stars/A_Snack2.png"),
          "cho-gath": ("MDW/The Morgue/Cho'Gath.psd", "MDW/The Morgue/Cho'Gath.png")}
 GHOST = ("Creatures/Other/1 Stars/Ghost.psd", "Creatures/Other/1 Stars/Ghost.png")       # not in the folder
+HALF = ("Creatures/Other/2 Stars/Half.psd", "Creatures/Other/2 Stars/Half.png")           # its PNG not pulled yet
 OUT_LINK = "Creatures/Other/5 Stars/Out.png"                                               # a link out of the folder
 IN_LINKS = {"Creatures/Other/1 Stars/Evil.psd": "../../../tools/run.command",               # links to non-card files
             "Creatures/Other/5 Stars/Cfg.png": "../../../.git/config"}
@@ -39,6 +40,7 @@ PATCHES = {"mac": 4, "win": 5, "linux": 4}[OS]
 CLICK_OPENS = OS != "win"            # WebView2: a script's click is no user gesture, so its links never leave
 LABELS = {"mac": ["Open in Photoshop", "Show in Finder", "Copy PNG"], "win": ["Open in Photoshop", "Show in Explorer",
           "Copy PNG"], "linux": ["Open PSD", "Show in folder", "Copy PNG"]}[OS]
+STALE = 600                          # a self-test ends within 120 s (watchdog): older temp folders are from runs that died
 
 
 def png_bytes(seed, w=3, h=2):
@@ -61,6 +63,8 @@ def make_fixture(root):
             p = root.joinpath(*rel.split("/"))
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(data)
+    root.joinpath(*HALF[0].split("/")).parent.mkdir(parents=True, exist_ok=True)
+    root.joinpath(*HALF[0].split("/")).write_bytes(b"8BPS" + bytes(22))
     if os.name == "posix":
         outside = root.parent / "outside.png"
         outside.write_bytes(png_bytes(9))
@@ -89,7 +93,7 @@ class Pages(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self):
-        self.pages, self.seen = {}, []
+        self.pages, self.seen, self.down = {}, [], False
         super().__init__(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server_address[1]}"
         threading.Thread(target=self.serve_forever, daemon=True).start()
@@ -102,6 +106,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
         self.server.seen.append(path)
+        if self.server.down:                         # ST16: the site unreachable (connection dropped, no reply)
+            self.close_connection = True
+            return
         body = self.server.pages.get(path)
         if body is None:
             self.send_response(404)
@@ -349,17 +356,30 @@ def pywebview_version():
     return _version.__version__
 
 
+def sweep(base=None):
+    """Removes temp folders of earlier self-tests that died (the watchdog's exit, a crash)."""
+    for p in Path(base or tempfile.gettempdir()).glob("cardbrowser-selftest-*"):
+        try:
+            if p.is_dir() and not p.is_symlink() and time.time() - p.stat().st_mtime > STALE:
+                shutil.rmtree(p, ignore_errors=True)
+        except OSError:
+            pass
+
+
 def run(opts):
     started = time.monotonic()
+    sweep()
     tmp = Path(tempfile.mkdtemp(prefix="cardbrowser-selftest-"))
     os.environ["CARDBROWSER_HOME"] = str(tmp / "home")
     clone = tmp / "clone"
     make_fixture(clone)
     S, O = Pages(), Pages()
+    S.down = True                                    # ST16: the first load fails
     S.pages.update(site_pages(S.url, O.url))
     O.pages.update(other_pages())
     site = S.url + "/TTSCardMaker/"
     cardbrowser.setup_logging()
+    threading.excepthook = cardbrowser.thread_error
     cardbrowser.save_settings({"folder": str(clone)})
     cardbrowser._first, cardbrowser.RELEASES = True, site + "releases-old.json"      # offline: never GitHub
     report = {"app": cardbrowser.VERSION, "os": OS, "python": platform.python_version(), "machine": platform.machine(),
@@ -381,6 +401,7 @@ def run(opts):
     def watchdog():
         step("WD", "watchdog", False, "120 s passed")
         finish(3)
+        shutil.rmtree(tmp, ignore_errors=True)
         os._exit(3)
     dog = threading.Timer(120, watchdog)
     dog.daemon = True
@@ -424,7 +445,31 @@ def _refused(port):
         return True
 
 
+def offline_start(h, rec, S, site, step, window):
+    """ST16: the site unreachable at start (macOS: a blank window, no API); the menu's Reload and Open this page in my
+    browser still work."""
+    end = time.monotonic() + 20
+    while not S.seen and time.monotonic() < end:
+        time.sleep(0.1)
+    time.sleep(1.0)                                  # the engine gives up on the dropped load
+    blank = not window.events.before_load.is_set()
+    menu = {m.title: m.function for m in cardbrowser.menus()[0].items if hasattr(m, "function")}
+    rec.take()
+    guards._opened.clear()
+    t0 = time.monotonic()
+    menu["Open this page in my browser"]()
+    opened = rec.take()
+    S.down = False
+    h.loaded.clear()
+    menu["Reload"]()
+    secs = time.monotonic() - t0
+    ok = h.ready() and h.js("document.title") == "S"
+    step("ST16", "offline start", ok and opened == [("browser", site)] and secs < 5 and (blank or OS != "mac"),
+         f"{'blank window' if blank else 'error page'}; menu calls {secs:.1f} s; browser {len(opened)}; site {'up' if ok else 'NOT up'}")
+
+
 def steps_body(h, rec, S, O, site, root, step, window):
+    offline_start(h, rec, S, site, step, window)
     ok = h.ready()
     renderer = getattr(window.gui, "renderer", "?")
     gated = getattr(getattr(guards.PLATFORM, "js_bridge_call", None), "gated", False) and \
@@ -473,7 +518,12 @@ def steps_body(h, rec, S, O, site, root, step, window):
     # ST6: a card the folder doesn't have yet
     h.js(f"openCard('ghost', {json.dumps(GHOST[0])}, {json.dumps(GHOST[1])}); 1")
     said = [h.click(0), h.click(1), h.click(2)]
-    step("ST6", "missing", said == [cardbrowser.NOT_YET] * 3 and not rec.take(), said[0])
+    none = not rec.take()
+    h.js(f"openCard('half', {json.dumps(HALF[0])}, {json.dumps(HALF[1])}); 1")
+    show, copy = h.click(1), h.click(2)
+    psd = rec.take() == expect_reveal(root.joinpath(*HALF[0].split("/")))
+    step("ST6", "missing", said == [cardbrowser.NOT_YET] * 3 and none and show.startswith("Showing") and psd
+         and copy == cardbrowser.NOT_YET, f"{said[0]} Show with no PNG: {'the PSD' if psd else 'NOT the PSD'}")
     # ST7: path attacks through each call
     n0, bad = len(h.replies), []
     for a in ATTACKS:
@@ -527,6 +577,12 @@ def steps_body(h, rec, S, O, site, root, step, window):
     time.sleep(0.8)
     if rec.take():
         bad.append("_blank file:/ms-settings: reached the browser")
+    h.js("window.__w = window.open('', '_blank'); 1")                  # the deck's Print proxies
+    time.sleep(0.5)
+    if not h.js("window.__w === null && /Copy share link/.test((document.querySelector('.card-app-note') || {}).textContent)"):
+        bad.append("print: no note")
+    if rec.take():
+        bad.append("print: reached the browser")
     step("ST9", "navigation", not bad and h.url() == home, "; ".join(bad) or "stayed on the site")
     # ST10: frames never reach the bridge (and another origin's frame never loads on macOS/Linux)
     calls, refused0 = len(rec.calls), sum("sender refused" in m for m in rec.logs)
@@ -563,6 +619,25 @@ def steps_body(h, rec, S, O, site, root, step, window):
     step("ST13", "update note", ok and "v99.0.0" in text and "v100" not in text and href == tag_url + "v99.0.0"
          and opened == ([("browser", href)] if CLICK_OPENS else []) and none and first,
          f"{text.strip()[:60]}; old list: {'no note' if none else 'NOTE'}; first load's list {'local' if first else 'NOT local'}")
+    # ST17: a reply that lands after a full reload: one log line (no stderr traceback), the next click works
+    real, late0 = actions.reveal, sum("thread: JavascriptException" in m for m in rec.logs)
+
+    def reveal(p):
+        h.loaded.wait(10)                            # answers once the page has reloaded
+        return real(p)
+    actions.reveal = reveal
+    cardbrowser._recent.clear()
+    rec.take()
+    h.loaded.clear()
+    h.js("document.querySelectorAll('#modal .card-app button')[1].click(); setTimeout(() => location.reload(), 200); 1")
+    ok = h.ready() and h.until("document.querySelectorAll('#modal .card-app button').length === 3")
+    time.sleep(1.0)
+    actions.reveal = real
+    late = sum("thread: JavascriptException" in m for m in rec.logs) - late0
+    first = rec.take()
+    said = h.click(1)
+    step("ST17", "reload mid-reply", ok and late == 1 and len(first) == 1 and said.startswith("Showing") and len(rec.take()) == 1
+         and threading.excepthook is cardbrowser.thread_error, f"late reply logged {late}x; next Show: {said}")
     # ST11: nothing the page or log saw holds a path or a traceback
     log_text = (cardbrowser.app_home() / "cardbrowser.log").read_text(encoding="utf-8")
     seen = "\n".join(map(str, h.replies)) + log_text + "\n".join(rec.logs)      # raw text: JSON doubles backslashes

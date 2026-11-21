@@ -177,8 +177,8 @@ _busy = threading.Lock()
 _recent = collections.deque(maxlen=6)
 
 
-def reply(ok, msg):
-    return {"ok": bool(ok), "msg": msg}
+def reply(ok, msg, **more):
+    return {"ok": bool(ok), "msg": msg, **more}
 
 
 def act(rel, exts, fn):
@@ -199,7 +199,7 @@ def act(rel, exts, fn):
             return reply(False, NOT_CARD)
         if not p.is_file():
             log.info("missing %s", rel)
-            return reply(False, NOT_YET)
+            return reply(False, NOT_YET, missing=True)          # Show then tries the card's PSD
         ok, msg = fn(p)
         log.info("%s %s: %s", fn.__name__, "ok" if ok else "no", rel)
         return reply(ok, f"{msg} {note}" if note else msg)
@@ -229,6 +229,7 @@ class Api:
 
 # ---- the window ----
 _first = True
+_start = LIVE                                      # the window's first page (make_window)
 
 
 def inject_script():
@@ -257,6 +258,25 @@ def note(text):
         _window.run_js(f"window.__cardBrowserNote && window.__cardBrowserNote({json.dumps(text)})")
 
 
+def reload():
+    """Reloads the page; if no site page ever loaded (offline at start: a blank window, no API), loads the first page."""
+    if _window and _window.events.loaded.is_set() and guards.on_site(page_url(_window)):
+        _window.run_js("location.reload()")
+    elif _window:
+        _window.load_url(_start)
+
+
+def in_browser():
+    if _window:
+        guards.outside(page_url(_window) if _window.events.loaded.is_set() else _start)
+
+
+def thread_error(a):
+    """An uncaught thread error (e.g. a reply to a page that reloaded): one log line, no traceback on stderr."""
+    if a.exc_type is not SystemExit:
+        log.warning("thread: %s", where(a.exc_value) if a.exc_value else a.exc_type.__name__)
+
+
 def choose_folder():
     try:
         root, msg = pick_folder()
@@ -269,8 +289,8 @@ def menus():
     from webview.menu import Menu, MenuAction, MenuSeparator
     return [Menu(NAME, [
         MenuAction("Choose TTSCardMaker folder…", choose_folder),
-        MenuAction("Reload", lambda: _window and _window.run_js("location.reload()")),
-        MenuAction("Open this page in my browser", lambda: _window and guards.outside(page_url(_window))),
+        MenuAction("Reload", reload),
+        MenuAction("Open this page in my browser", in_browser),
         MenuSeparator(),
         MenuAction("Show log", lambda: actions.reveal(app_home() / "cardbrowser.log")),
     ])]
@@ -278,9 +298,10 @@ def menus():
 
 def make_window(site, hidden=False, url=None):
     """Guards installed, settings set, the window created (not started); url: a page of the site to open first."""
-    global _window
+    global _window, _start
     import webview
     guards.install(site)
+    _start = url or site
     webview.settings["ALLOW_DOWNLOADS"] = True        # the TTS deck export: a blob a[download]
     webview.settings["ALLOW_FILE_URLS"] = False
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True   # its opener is guards.outside
@@ -315,6 +336,7 @@ def main(argv=None):
             print("--site takes only http://127.0.0.1:<port>/.../ or http://localhost:<port>/.../", file=sys.stderr)
             return 2
     setup_logging()
+    threading.excepthook = thread_error
     log.info("start %s %s on %s", NAME, VERSION, OS)
     make_window(site)
     start()

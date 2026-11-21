@@ -10,7 +10,7 @@
   const NOTE = "position:fixed;right:12px;bottom:12px;z-index:97;max-width:min(420px,calc(100vw - 24px));display:flex;" +
     "gap:10px;align-items:center;padding:8px 12px;border-radius:10px;border:1px solid var(--border-strong,#8884);" +
     "background:var(--surface,#fff);color:var(--ink,#000);box-shadow:0 4px 16px #0004;font:14px/1.4 system-ui,sans-serif";
-  const button = (slot, label, tip, call, rel) => {
+  const button = (slot, label, tip, call, rels) => {
     const b = document.createElement("button");
     b.type = "button"; b.textContent = label; b.dataset.tip = tip;        // the site's own tooltips
     b.addEventListener("click", async () => {
@@ -20,16 +20,20 @@
         return;
       }
       say.textContent = "…";
-      try { say.textContent = String((await api[call](rel)).msg); } catch { say.textContent = "That didn't work."; }
+      try {
+        let r;
+        for (const rel of rels) if (!(r = await api[call](rel)).missing) break;   // Show: the PSD when the PNG isn't pulled
+        say.textContent = String(r.msg);
+      } catch { say.textContent = "That didn't work."; }
     });
     slot.append(b);
   };
   function fill(slot) {
     if (!slot || !slot.isConnected || slot.childElementCount) return;    // a refill never doubles the buttons
     const { filePsd: psd, filePng: png } = slot.dataset;
-    if (psd) button(slot, OPEN, "Opens the card's PSD from your TTSCardMaker folder", "open_psd", psd);
-    if (png || psd) button(slot, SHOW, "Shows the card's PNG in your folder (its PSD is beside it): drag it from there", "reveal", png || psd);
-    if (png) button(slot, "Copy PNG", "Copies the PNG from your folder, to paste anywhere", "copy_png", png);
+    if (psd) button(slot, OPEN, "Opens the card's PSD from your TTSCardMaker folder", "open_psd", [psd]);
+    if (png || psd) button(slot, SHOW, "Shows the card's PNG in your folder (its PSD is beside it): drag it from there", "reveal", [png, psd].filter(Boolean));
+    if (png) button(slot, "Copy PNG", "Copies the PNG from your folder, to paste anywhere", "copy_png", [png]);
     const say = document.createElement("span");
     say.className = "muted card-app-say"; say.setAttribute("role", "status"); say.style.alignSelf = "center";
     slot.append(say);
@@ -68,6 +72,14 @@
     return box;
   }
   window.__cardBrowserNote = text => { const s = document.createElement("span"); s.textContent = String(text); corner("card-app-note", [s], 8000); };
+  const open = window.open;                          // the deck's Print proxies writes into a blank window: none here
+  window.open = function (url, ...rest) {
+    const w = open.call(window, url, ...rest);
+    if (!w && (!url || url === "about:blank")) {
+      window.__cardBrowserNote("To print proxies, choose Copy share link, then open that link in your browser and print there.");
+    }
+    return w;
+  };
   const TAG = /^v(\d{1,3})\.(\d{1,3})\.(\d{1,3})(-[0-9A-Za-z.]{1,20})?$/;
   const key = t => { const m = TAG.exec(t); return m ? [+m[1], +m[2], +m[3], m[4] ? 0 : 1] : null; };   // x.y.z-pre < x.y.z
   const newer = (a, b) => { for (let i = 0; i < 4; i++) if (a[i] !== b[i]) return a[i] > b[i]; return false; };
