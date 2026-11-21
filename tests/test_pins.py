@@ -78,6 +78,9 @@ def test_edgechromium_points():
     src = (ROOT / "platforms/edgechromium.py").read_text(encoding="utf-8")
     assert "NavigationStarting += self.on_navigation_start" in src and "WebMessageReceived += self.on_script_notify" in src
     assert "NewWindowRequested += self.on_new_window_request" in src
+    assert m["on_webview_ready"] == ["self", "sender", "args"] and {"Action", "Task", "String"} <= imported(mod)   # START
+    assert "CoreWebView2InitializationCompleted += self.on_webview_ready" in src
+    assert "self.syncContextTaskScheduler = TaskScheduler.FromCurrentSynchronizationContext()" in src
     win = (ROOT / "platforms/winforms.py").read_text(encoding="utf-8")
     assert "renderer = 'edgechromium'" in win
     assert win.index("from . import mshtml as IE") < win.index("IE._set_ie_mode()")   # guards blocks that import first
@@ -92,6 +95,7 @@ def test_gtk_points():
     src = (ROOT / "platforms/gtk.py").read_text(encoding="utf-8")
     assert "connect('decide-policy', self.on_navigation)" in src
     assert "connect('script-message-received', self.on_js_bridge_call)" in src
+    assert "self.manager = webkit.UserContentManager()" in src and "user_content_manager=self.manager" in src   # START
 
 
 @pytest.mark.parametrize("name", ["pywebviewMoveWindow", "pywebviewEventHandler", "pywebviewAsyncCallback",

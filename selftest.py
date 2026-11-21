@@ -1,7 +1,7 @@
 """CardBrowser --self-test [--ci] [--report FILE] [--persist write|read]: the real app code against a fixture site and
 folder on 127.0.0.1, with external effects recorded (no Photoshop, file manager or browser opens). Safe mode (no --ci)
-never touches the real clipboard. --persist: two runs (same CARDBROWSER_HOME) prove the saved web data (the site's
-sign-in) survives a restart. Exits 0 only if every step passes."""
+never touches the real clipboard. --persist: two runs (same CARDBROWSER_HOME) prove the site's saved data (theme,
+filters, hands) survives a restart. Exits 0 only if every step passes."""
 import hashlib
 import http.server
 import json
@@ -38,7 +38,7 @@ IN_LINKS = {"Creatures/Other/1 Stars/Evil.psd": "../../../tools/run.command",   
 ATTACKS = ["../x.psd", "/etc/x.psd", "C:/x.psd", "Creatures\\..\\x.psd", "Creatures/a.psd:s.psd", ".git/x.psd",
            "MDW/Linked/x.png", "Types/x.png", "Creatures/x.txt", "Creatures/a/CON.psd", "",
            "Creatures/" + "a" * 227 + ".psd"] + ([OUT_LINK, *IN_LINKS] if os.name == "posix" else [])
-PATCHES = {"mac": 4, "win": 5, "linux": 4}[OS]
+PATCHES = {"mac": 4, "win": 6, "linux": 4}[OS]
 LABELS = {"mac": ["Open in Photoshop", "Show in Finder", "Copy PNG"], "win": ["Open in Photoshop", "Show in Explorer",
           "Copy PNG"], "linux": ["Open PSD", "Show in folder", "Copy PNG"]}[OS]
 STALE = 600                          # a self-test ends within 120 s (watchdog): older temp folders are from runs that died
@@ -131,6 +131,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+EARLY = ("window.__early = { flag: !!window.cardApp && window.cardApp.readOnly === true && Object.isFrozen(window.cardApp), "
+         "keys: window.__cardBrowserNoKeys === true };")        # the page's first script: what the app set before it
 DIALOG = """<script>
 const esc = s => String(s).replace(/[&<>"']/g, c => "&#" + c.charCodeAt(0) + ";");
 window.openCard = (id, psd, png, hook = true) => {     // the hook contract (TTSCardMaker site/assets/app.js appHook)
@@ -147,7 +149,7 @@ window.openCard = (id, psd, png, hook = true) => {     // the hook contract (TTS
 
 def site_pages(S, O, prefix="/TTSCardMaker/"):
     snack = CARDS["a-snack2"]
-    index = f"""<!doctype html><meta charset="utf-8"><title>S</title><div id="modal" hidden></div>
+    index = f"""<!doctype html><meta charset="utf-8"><script>{EARLY}</script><title>S</title><div id="modal" hidden></div>
 <a id="same" href="{O}/other.html">same</a> <a id="blank" target="_blank" rel="noopener" href="{O}/blank.html">blank</a>
 <a id="bfile" target="_blank" href="file:///etc/hosts">file</a> <a id="bms" target="_blank" href="ms-settings:display">ms</a>
 {DIALOG}<script>openCard("a-snack2", {json.dumps(snack[0])}, {json.dumps(snack[1])});</script>"""
@@ -190,12 +192,25 @@ def quiet(keep_data=False):
         def activateIgnoringOtherApps_(self, _flag):
             pass
 
+    throwaway = WebKit.WKWebsiteDataStore.nonPersistentDataStore()
+
     class Store:
-        defaultDataStore = staticmethod(lambda: WebKit.WKWebsiteDataStore.nonPersistentDataStore())
+        defaultDataStore = staticmethod(lambda: throwaway)
         allWebsiteDataTypes = staticmethod(lambda: WebKit.WKWebsiteDataStore.allWebsiteDataTypes())
 
+    class Config:                                    # pywebview sets the store after making the view (no effect): set it first
+        @staticmethod
+        def alloc():
+            return Config
+
+        @staticmethod
+        def init():
+            c = WebKit.WKWebViewConfiguration.alloc().init()
+            c.setWebsiteDataStore_(throwaway)
+            return c
+
     class Kit:
-        WKWebsiteDataStore = Store
+        WKWebsiteDataStore, WKWebViewConfiguration = Store, Config
 
         def __getattr__(self, n):
             return getattr(WebKit, n)
@@ -365,6 +380,24 @@ def read_clipboard(r):
     return b"image" if out.get("image") else None
 
 
+def web_store(window):
+    """Where the window's web data goes: macOS reads its store's kind on the main thread; elsewhere private mode."""
+    if OS != "mac":
+        return "private mode"
+    from PyObjCTools import AppHelper
+    from webview.platforms import cocoa
+    out, done = {}, threading.Event()
+
+    def read():
+        try:
+            out["disk"] = bool(cocoa.BrowserView.instances[window.uid].webview.configuration().websiteDataStore().isPersistent())
+        finally:
+            done.set()
+    AppHelper.callAfter(read)
+    done.wait(5)
+    return {True: "saved on disk", False: "throwaway"}.get(out.get("disk"), "?")
+
+
 def pywebview_version():
     from webview import _version
     return _version.__version__
@@ -482,15 +515,47 @@ def offline_start(h, rec, S, site, step, window):
          f"{'blank window' if blank else 'error page'}; menu calls {secs:.1f} s; browser {len(opened)}; site {'up' if ok else 'NOT up'}")
 
 
+KEYS = """window.__k = undefined;
+(async () => {
+  const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  const db = await new Promise((ok, no) => { const r = indexedDB.open("cardbrowser-keys", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("s"); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
+  const out = [];
+  for (const [how, value] of [["add", key], ["put", key], ["put", { key }]]) {
+    const t = db.transaction("s", "readonly");        // read-only: without the guard these fail before the key is serialized
+    try { t.objectStore("s")[how](value, "k"); out.push("stored"); } catch (e) { out.push(e.name + (/CardBrowser/.test(e.message) ? " (app)" : "")); }
+  }
+  await new Promise((ok, no) => { const t = db.transaction("s", "readwrite"); t.objectStore("s").put("text", "t");
+    t.oncomplete = ok; t.onerror = () => no(t.error); });
+  db.close(); indexedDB.deleteDatabase("cardbrowser-keys");
+  window.__k = JSON.stringify({ out, text: "stored" });
+})().catch(e => { window.__k = JSON.stringify({ error: String(e && e.name) }); });
+1"""
+
+
+def read_only(h, step):
+    """ST19: before the site's first script the page knows it is in the read-only app (window.cardApp, frozen, not
+    replaceable) and cannot keep a WebCrypto key in IndexedDB: the site then shows no Sign in or Edit."""
+    early = h.js("window.__early") or {}
+    kept = h.js("try { window.cardApp = { readOnly: false }; } catch (e) {} try { delete window.cardApp; } catch (e) {} "
+                "!!window.cardApp && window.cardApp.readOnly === true")
+    h.js(KEYS)
+    keys = json.loads(h.until("window.__k !== undefined", 10) and h.js("window.__k") or "{}")
+    refused = keys.get("out") == ["DataCloneError (app)"] * 3 and keys.get("text") == "stored"
+    step("ST19", "read-only", early == {"flag": True, "keys": True} and kept and refused,
+         f"at the page's start: {early}; flag kept: {kept}; keys: {keys.get('out') or keys}")
+
+
 def steps_body(h, rec, S, O, site, root, step, window):
     offline_start(h, rec, S, site, step, window)
     ok = h.ready()
     renderer = getattr(window.gui, "renderer", "?")
     gated = getattr(getattr(guards.PLATFORM, "js_bridge_call", None), "gated", False) and \
         getattr(guards.PLATFORM, "webbrowser", None).open is guards.outside
-    version = pywebview_version()
+    version, store = pywebview_version(), web_store(window)
     step("ST1", "engine + pins", ok and renderer == guards.ENGINE[OS] and version == "6.2.1" and gated
-         and len(guards.PATCHED) == PATCHES, f"renderer {renderer}, pywebview {version}, patched {guards.PATCHED}")
+         and len(guards.PATCHED) == PATCHES and store in ("throwaway", "private mode"),
+         f"renderer {renderer}, pywebview {version}, patched {guards.PATCHED}, web data {store}")
     # ST2: the dialog opened before pywebview attached gets its buttons late
     b = h.buttons()
     say = h.js("document.querySelectorAll('#modal .card-app .card-app-say').length")
@@ -599,6 +664,7 @@ def steps_body(h, rec, S, O, site, root, step, window):
         bad.append("print: reached the browser")
     step("ST9", "navigation", not bad and h.url() == home, ("; ".join(bad) or "stayed on the site")
          + (f"; script clicks open links: {'yes' if gesture else 'no'}" if OS == "win" else ""))
+    read_only(h, step)
     # ST10: frames never reach the bridge (another origin's frame never loads on macOS/Linux; Linux: no srcdoc frame)
     count = lambda text: sum(text in m for m in rec.logs)
     calls, refused0, srcdoc0 = len(rec.calls), count("sender refused"), count("navigation: refused about")
@@ -673,7 +739,7 @@ def steps_body(h, rec, S, O, site, root, step, window):
     step("ST11", "no leaks", not leaks and h.replies, f"{len(h.replies)} replies + log checked")
 
 
-# ---- --persist write|read: the site's sign-in (localStorage + IndexedDB) survives a restart ----
+# ---- --persist write|read: the site's saved data (localStorage + IndexedDB) survives a restart ----
 PERSIST_PORT = 47613                                 # fixed: both runs need the same origin
 KEPT = "kept-by-cardbrowser"
 WRITE = """window.__p = undefined;

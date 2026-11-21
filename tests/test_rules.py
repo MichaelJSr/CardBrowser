@@ -196,20 +196,29 @@ def test_gtk_never_loads_srcdoc_frames(monkeypatch):
         def ignore(self):
             self.ignored = True
 
+    added = []
+
     class BrowserView:
+        manager = types.SimpleNamespace(add_script=added.append)
+
         def on_navigation(self, wv, decision, kind):
             return "engine"
 
         def on_js_bridge_call(self, manager, message):
             pass
-    webkit = types.SimpleNamespace(NavigationPolicyDecision=Decision, NavigationType=types.SimpleNamespace(LINK_CLICKED=1))
+    webkit = types.SimpleNamespace(NavigationPolicyDecision=Decision, NavigationType=types.SimpleNamespace(LINK_CLICKED=1),
+                                   UserScript=types.SimpleNamespace(new=lambda *a: a),
+                                   UserContentInjectedFrames=types.SimpleNamespace(ALL_FRAMES="all"),
+                                   UserScriptInjectionTime=types.SimpleNamespace(START="start"))
     monkeypatch.setitem(sys.modules, "webview.platforms.gtk", types.SimpleNamespace(BrowserView=BrowserView, webkit=webkit))
     monkeypatch.setattr(guards, "PATCHED", [])
     guards._install_gtk()
+    view = BrowserView()
     for url, ok in ((SITE + "c/z/", True), ("about:blank", True), ("blob:https://michaeljsr.github.io/5f1c", True),
                     ("about:srcdoc", False), ("https://evil.example/", False)):
         d = Decision(url)
-        assert (BrowserView().on_navigation(None, d, 0) == "engine") is ok and d.ignored is not ok, url
+        assert (view.on_navigation(None, d, 0) == "engine") is ok and d.ignored is not ok, url
+    assert added == [(guards.START, "all", "start", None, None)]          # the read-only flag, once, before the first page
 
 
 class JsError(Exception):

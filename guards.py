@@ -20,6 +20,26 @@ ENGINE = {"mac": "wkwebview", "win": "edgechromium", "linux": "gtkwebkit2"}
 PATCHED = []                                # what install() patched (self-test ST1)
 PLATFORM = None                             # the patched pywebview backend module
 _browser = webbrowser.open                  # the self-test swaps in a recorder
+# The app is read-only (owner 11-21). APP_FLAG tells the site so before its own scripts (the hook contract: the site then
+# shows no Sign in, Edit or editor). NO_KEYS: no page may keep a WebCrypto key in IndexedDB (the site's sign-in and
+# remembered deck passphrases do): WebKit seals one with a key in the macOS keychain, which asks for the Mac password
+# after each unsigned update. START (both) runs at the start of every document, in every frame, on every engine.
+APP_FLAG = """if (!("cardApp" in window)) Object.defineProperty(window, "cardApp", { value: Object.freeze({ readOnly: true }), enumerable: true });
+"""
+NO_KEYS = """(() => {
+  if (window.__cardBrowserNoKeys || typeof IDBObjectStore === "undefined") return;
+  window.__cardBrowserNoKeys = true;
+  const isKey = v => { try { return v instanceof CryptoKey || (!!v && typeof v === "object" && Object.values(v).some(x => x instanceof CryptoKey)); } catch { return false; } };
+  for (const [proto, name] of [[IDBObjectStore.prototype, "add"], [IDBObjectStore.prototype, "put"], [IDBCursor.prototype, "update"]]) {
+    const real = proto[name];
+    proto[name] = function (value, ...rest) {
+      if (typeof CryptoKey !== "undefined" && isKey(value)) throw new DOMException("CardBrowser keeps no sign-in keys", "DataCloneError");
+      return real.call(this, value, ...rest);
+    };
+  }
+})();
+"""
+START = APP_FLAG + NO_KEYS
 
 
 def _parts(u):
@@ -114,6 +134,10 @@ def _install_mac():
     class CBDelegate(P.BrowserView.BrowserDelegate):
         def webView_decidePolicyForNavigationAction_decisionHandler_(self, wv, action, handler):
             try:
+                _start_mac(wv)
+            except Exception as e:                      # noqa: BLE001 (inject.js still adds NO_KEYS after the load)
+                log.warning("start script: %s", type(e).__name__)
+            try:
                 url, frame = str(action.request().URL().absoluteString()), action.targetFrame()
                 ok = frame_ok(url) or (frame is None and not action.shouldPerformDownload())
                 link = frame is not None and frame.isMainFrame() and action.navigationType() == 0   # a link click
@@ -132,6 +156,15 @@ def _install_mac():
     return P
 
 
+def _start_mac(wv):
+    """START as a WKUserScript (document start, every frame), added before the first navigation goes on."""
+    import WebKit
+    ucc = wv.configuration().userContentController()
+    if not any(s.source() == START for s in ucc.userScripts()):
+        ucc.addUserScript_(WebKit.WKUserScript.alloc().initWithSource_injectionTime_forMainFrameOnly_(
+            START, WebKit.WKUserScriptInjectionTimeAtDocumentStart, False))
+
+
 MSHTML = "webview.platforms.mshtml"
 
 
@@ -147,7 +180,17 @@ def _install_win():
         need_webview2()
     from webview.platforms import edgechromium as P
     E = P.EdgeChrome
-    nav, notify, new = E.on_navigation_start, E.on_script_notify, E.on_new_window_request
+    nav, notify, new, ready = E.on_navigation_start, E.on_script_notify, E.on_new_window_request, E.on_webview_ready
+
+    def on_webview_ready(self, sender, args):          # START first; pywebview's (it loads the page) once it is in
+        try:
+            if args.IsSuccess:
+                task = sender.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(START)
+                task.ContinueWith(P.Action[P.Task[P.String]](lambda _t: ready(self, sender, args)), self.syncContextTaskScheduler)
+                return
+        except Exception as e:                          # noqa: BLE001
+            log.warning("start script: %s", type(e).__name__)
+        ready(self, sender, args)
 
     def on_navigation_start(self, sender, args):       # main frame only; never raises into .NET
         try:
@@ -187,9 +230,9 @@ def _install_win():
         except Exception:                               # noqa: BLE001
             pass
 
-    E.on_navigation_start, E.on_script_notify, E.on_new_window_request = (on_navigation_start, on_script_notify,
-                                                                          on_new_window_request)
-    PATCHED.extend(["on_navigation_start", "on_script_notify", "on_new_window_request"])
+    E.on_navigation_start, E.on_script_notify, E.on_new_window_request, E.on_webview_ready = (
+        on_navigation_start, on_script_notify, on_new_window_request, on_webview_ready)
+    PATCHED.extend(["on_navigation_start", "on_script_notify", "on_new_window_request", "on_webview_ready"])
     return P
 
 
@@ -213,6 +256,13 @@ def _install_gtk():
     nav, bridge = P.BrowserView.on_navigation, P.BrowserView.on_js_bridge_call
 
     def on_navigation(self, wv, decision, kind):        # main frames and subframes; never raises into GTK
+        try:
+            if not getattr(self, "_cb_start", False):   # START before the first document
+                self._cb_start = True
+                self.manager.add_script(P.webkit.UserScript.new(START, P.webkit.UserContentInjectedFrames.ALL_FRAMES,
+                                                                P.webkit.UserScriptInjectionTime.START, None, None))
+        except Exception as e:                          # noqa: BLE001
+            log.warning("start script: %s", type(e).__name__)
         try:
             if type(decision) is P.webkit.NavigationPolicyDecision:
                 action = decision.get_navigation_action()

@@ -100,10 +100,14 @@ def test_write_finder_finds():
     assert writes(ast.parse(src)) == [("f", "write_bytes"), ("f", "os.replace"), ("f", "shutil.move"), ("f", "open w")]
 
 
-def test_inject_builds_dom_by_text_only():
+def test_inject_builds_dom_by_text_only(monkeypatch):
     js = (REPO / "inject.js").read_text(encoding="utf-8")
     assert js.count("%CONFIG%") == 1
     for name in ("inject.js", "selftest.py"):        # GTK: pywebview's script length is in characters, WebKit reads bytes
         assert (REPO / name).read_text(encoding="utf-8").isascii(), f"{name}: write \\u escapes"
+    import cardbrowser
+    import guards
+    monkeypatch.setattr(cardbrowser, "_first", True)
+    assert guards.START.isascii() and cardbrowser.inject_script().startswith(guards.NO_KEYS)     # NO_KEYS again after the load
     for bad in ("inner" + "HTML", "outer" + "HTML", "insertAdjacent" + "HTML", "document." + "write", "ev" + "al(", "data-" + "action"):
         assert bad not in js

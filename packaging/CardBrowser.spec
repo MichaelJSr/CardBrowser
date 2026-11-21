@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(SPECPATH).parent
 VERSION = re.search(r'^VERSION = "([^"]+)"', (ROOT / "cardbrowser.py").read_text(encoding="utf-8"), re.M).group(1)
-BUNDLE_ID = os.environ.get("CARDBROWSER_BUNDLE_ID") or "io.github.michaeljsr.cardbrowser"   # sign-in data is keyed on it
+BUNDLE_ID = os.environ.get("CARDBROWSER_BUNDLE_ID") or "io.github.michaeljsr.cardbrowser"   # the saved web data is keyed on it
 assert re.fullmatch(r"io\.github\.michaeljsr\.cardbrowser(\.[a-z0-9]+)?", BUNDLE_ID), BUNDLE_ID
 MAC = sys.platform == "darwin"
 NOTICES = ROOT / "THIRD-PARTY-NOTICES.txt"

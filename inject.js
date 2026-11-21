@@ -1,6 +1,7 @@
 // CardBrowser's page side: run after every site page load. The site's hook (TTSCardMaker site/assets/app.js appHook):
 // openCard puts an empty div.card-app (data-file-psd / data-file-png: repo paths) in #modal .image-wrap and fires
 // "card-dialog" on document with detail {id, psd, png, slot}. This fills the slot with three buttons. DOM by textContent only.
+// The app is read-only: guards.py START sets window.cardApp before the site's scripts, so the site shows no Sign in or Edit.
 // ASCII only (\u escapes): on Linux pywebview gives WebKitGTK the length in characters, which it reads as bytes.
 (() => {
   if (window.__cardBrowser) return;

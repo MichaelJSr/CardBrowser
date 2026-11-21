@@ -7,7 +7,11 @@ the card files:
 - **Show in Finder** / **Explorer** / **folder**: shows the card's PNG in your folder (its PSD is beside it).
 - **Copy PNG**: copies the card's PNG from your folder, to paste anywhere (Discord, an image editor, a document).
 
-Everything else (search, card pages, the editor, decks, the rulebook) is the live website, always up to date.
+Everything else (search, card pages, decks, the rulebook, stats, people) is the live website, always up to date.
+
+**CardBrowser is read-only**: no Sign in, no Edit, and no sign-in, token or key kept (a private deck asks for its
+passphrase each time). Edit cards, the rulebook, your profile or decks on the website in your browser: **Open this page
+in my browser** in the CardBrowser menu opens the same page there.
 
 ## Download
 
@@ -15,12 +19,10 @@ Get the newest release from the [Releases page](https://github.com/MichaelJSr/Ca
 
 | Your computer | File |
 |---|---|
-| Mac with Apple silicon (M1 or newer) | `CardBrowser-<version>-mac-arm64.zip` |
-| Mac with an Intel chip | `CardBrowser-<version>-mac-x64.zip` |
+| Mac with Apple silicon (Apple menu > About This Mac says "Chip") | `CardBrowser-<version>-mac-arm64.zip` |
+| Mac with an Intel chip (About This Mac says "Processor") | `CardBrowser-<version>-mac-x64.zip` |
 | Windows 10 or 11 (64-bit) | `CardBrowser-<version>-windows-x64.zip` |
 | Linux | `CardBrowser-<version>-linux.tar.gz` |
-
-Which Mac? Apple menu > About This Mac: "Chip" means Apple silicon, "Processor" means Intel.
 
 ## Opening it the first time
 
@@ -38,10 +40,8 @@ CardBrowser is free and not signed with a paid Apple or Microsoft certificate, s
 1. Right-click the zip > Properties > tick **Unblock** > OK. Then right-click > Extract All.
 2. Open the `CardBrowser` folder and run `CardBrowser.exe`.
 3. If "Windows protected your PC" appears: click **More info**, then **Run anyway**.
-4. Smart App Control (on some fresh Windows 11 installs) blocks unsigned apps and has no "run anyway". To use
-   CardBrowser you would have to turn it off in Windows Security > App & browser control > Smart App Control.
-5. CardBrowser needs Microsoft Edge WebView2, which Windows 11 and up-to-date Windows 10 already have. If it is
-   missing, CardBrowser says so and opens the download page.
+4. Smart App Control (some fresh Windows 11 installs) blocks unsigned apps with no "run anyway": turn it off to use it.
+5. CardBrowser needs Microsoft Edge WebView2 (Windows 11 and up-to-date Windows 10 have it); if not, it says so.
 
 **Linux**
 1. Install GTK and WebKit once. Debian/Ubuntu: `sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0
@@ -53,7 +53,6 @@ CardBrowser is free and not signed with a paid Apple or Microsoft certificate, s
 1. Open any card and click one of its buttons.
 2. CardBrowser asks for your TTSCardMaker folder: choose the one GitHub Desktop made (often
    `Documents/GitHub/TTSCardMaker`). To change it later: **Choose TTSCardMaker folder…** in the CardBrowser menu.
-3. To edit cards on the website, sign in once inside CardBrowser (it keeps its own sign-in, separate from your browser).
 
 ## What the messages mean
 
@@ -87,7 +86,7 @@ CardBrowser is free and not signed with a paid Apple or Microsoft certificate, s
 ## Updates and uninstalling
 
 A note in the corner says when a new version is out; its link opens the release page. Download it and replace the old
-app. Your sign-in and folder choice are kept.
+app. Your folder choice and the website's settings in CardBrowser (theme, filters, hands) are kept.
 
 To uninstall, delete the app, then (optional) its settings and website data:
 - macOS: `~/Library/Application Support/CardBrowser`, `~/Library/WebKit/io.github.michaeljsr.cardbrowser`,
@@ -97,21 +96,22 @@ To uninstall, delete the app, then (optional) its settings and website data:
 
 ## For developers
 
-**The site hook** (TTSCardMaker `site/assets/app.js`, `appHook`): each card dialog has an empty `div.card-app` in
-`#modal .image-wrap` with `data-file-psd` / `data-file-png` (repo paths with `/`), and openCard fires a `card-dialog`
-event on `document` with `detail = {id, psd, png, slot}`. In a browser the slot stays empty and hidden. A page CSP must
-allow `'unsafe-eval'` (pywebview builds its bridge with `new Function`). No untrusted HTML in any frame, sandboxed or
-not: on Linux the app cannot tell a frame from the page. AutoCroissant's `tests/test_site_app_hook.py` guards the hook.
+**The site hook** (TTSCardMaker `site/assets/app.js`): each card dialog has an empty `div.card-app` in `#modal
+.image-wrap` with `data-file-psd` / `data-file-png` (repo paths), and openCard fires `card-dialog` on `document` with
+`detail = {id, psd, png, slot}`; a browser shows nothing. Before the site's scripts CardBrowser sets a frozen
+`window.cardApp = {readOnly: true}` (`guards.py` START), so `appReadOnly()` leaves out Sign in, Edit and the editor.
+START also stops pages keeping WebCrypto keys in IndexedDB (macOS would seal them with a keychain key that asks for the
+Mac password after each update). A page CSP must allow `'unsafe-eval'` (pywebview's bridge uses `new Function`). No
+untrusted HTML in any frame (on Linux the app cannot tell a frame from the page). AutoCroissant's
+`tests/test_site_app_hook.py` guards all of this.
 
-**Run from source**: `pip install -r requirements.txt -c constraints.txt pytest`, then `python cardbrowser.py`
-(tests: `python -m pytest -q tests`).
+**Self-test** (in every build): `CardBrowser --self-test [--ci] [--report FILE]` runs the real app, window hidden,
+against a fixture site and folder on 127.0.0.1, recording the file actions (macOS: run
+`CardBrowser.app/Contents/MacOS/CardBrowser`). `--ci` also uses the real clipboard. `--persist write`, then `--persist
+read` in a second run with the same `CARDBROWSER_HOME`, checks that the website's saved data is kept.
 
-**Self-test** (ships in every build): `CardBrowser --self-test [--ci] [--report FILE]` runs the real app against a
-fixture site and folder on 127.0.0.1 and records the file actions instead of doing them (on macOS run
-`CardBrowser.app/Contents/MacOS/CardBrowser`). `--ci` also uses the real clipboard. `--persist write`, then
-`--persist read` in a second run with the same `CARDBROWSER_HOME`, checks that the website's sign-in is kept.
-
-**Build**: macOS and Windows: `python packaging/notices.py THIRD-PARTY-NOTICES.txt`, then
+**Build**: from source, `pip install -r requirements.txt -c constraints.txt pyinstaller pytest` (tests: `python -m
+pytest -q tests`). macOS and Windows: `python packaging/notices.py THIRD-PARTY-NOTICES.txt`, then
 `pyinstaller --noconfirm packaging/CardBrowser.spec`. Linux: `packaging/linux.sh`. GitHub Actions
 (`.github/workflows/build.yml`) builds every system, self-tests each unpacked build, and on a `v<VERSION>` tag makes a
 pre-release. pywebview is pinned to 6.2.1 because `guards.py` patches its internals: a new version must pass

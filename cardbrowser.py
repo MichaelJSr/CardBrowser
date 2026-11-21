@@ -1,6 +1,7 @@
-"""CardBrowser: the TTSCardMaker card website in a window, plus Open in Photoshop, Show in Finder/Explorer and Copy PNG
-on each card, from the maker's own TTSCardMaker folder. The app never writes, moves or deletes card files, never runs
-git, and never sends the folder path anywhere (it lives only in settings.json on this computer)."""
+"""CardBrowser: the TTSCardMaker card website in a window, read-only (no sign-in or edits: guards.py START), plus Open in
+Photoshop, Show in Finder/Explorer and Copy PNG on each card, from the maker's own TTSCardMaker folder. The app never
+writes, moves or deletes card files, never runs git, and never sends the folder path anywhere (it lives only in
+settings.json on this computer)."""
 import collections
 import json
 import logging
@@ -19,7 +20,7 @@ import guards
 
 VERSION = "0.1.0"
 NAME = "CardBrowser"
-BUNDLE_ID = "io.github.michaeljsr.cardbrowser"       # fixed for good: sign-in data is keyed on it
+BUNDLE_ID = "io.github.michaeljsr.cardbrowser"       # fixed for good: the saved web data is keyed on it
 LIVE = "https://michaeljsr.github.io/TTSCardMaker/"
 RELEASES = "https://api.github.com/repos/MichaelJSr/CardBrowser/releases?per_page=10"
 OS = {"darwin": "mac", "win32": "win"}.get(sys.platform, "linux")
@@ -238,7 +239,7 @@ def inject_script():
     cfg = {"os": OS, "version": VERSION, "pre": "-" in VERSION or VERSION.startswith("0."),
            "releases": RELEASES if _first else None}
     _first = False
-    return (HERE / "inject.js").read_text(encoding="utf-8").replace("%CONFIG%", json.dumps(cfg))
+    return guards.NO_KEYS + (HERE / "inject.js").read_text(encoding="utf-8").replace("%CONFIG%", json.dumps(cfg))
 
 
 def page_url(window):
