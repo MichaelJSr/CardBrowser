@@ -98,3 +98,13 @@ def test_gtk_points():
                                   "pywebviewStateUpdate", "pywebviewStateDelete"])
 def test_internal_names_still_these(name):
     assert f"'{name}'" in (ROOT / "util.py").read_text(encoding="utf-8")       # the gate drops every one
+
+
+def test_webview2_notice_names_the_bundled_sdk():
+    """The Windows notices carry the licence of the WebView2 SDK version pywebview bundles there."""
+    spec = importlib.util.spec_from_file_location("notices", Path(__file__).resolve().parent.parent / "packaging/notices.py")
+    notices = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(notices)
+    assert notices.WEBVIEW2.encode("utf-16-le") in (ROOT / "lib/Microsoft.Web.WebView2.Core.dll").read_bytes()
+    title, text = notices.webview2()
+    assert notices.WEBVIEW2 in title and "Redistributions in binary form" in text and "NOTICES AND INFORMATION" in text

@@ -1,5 +1,6 @@
 """Writes THIRD-PARTY-NOTICES.txt: every distribution installed in this Python (or in --path DIR) with its licence
-text, then the licences of Python and OpenSSL (skipped with --no-runtime: the Linux build uses the system Python).
+text, then the licences of Python and OpenSSL (skipped with --no-runtime: the Linux build uses the system Python), and
+on Windows those of Microsoft's WebView2 SDK files that pywebview bundles there.
 Exits 1 if any licence text is not found. Usage: python packaging/notices.py [--path DIR] [--no-runtime] OUT"""
 import argparse
 import importlib.metadata as md
@@ -11,6 +12,7 @@ from pathlib import Path
 
 NAME = re.compile(r"(LICEN[CS]E|COPYING|NOTICE)", re.I)
 RULE = "=" * 78
+WEBVIEW2 = "1.0.3856.49"                             # the SDK version of pywebview 6.2.1's DLLs (tests/test_pins.py)
 MIT = """Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
 rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
@@ -89,6 +91,15 @@ def runtime():
     return out
 
 
+def webview2():
+    """pywebview's PyInstaller hook bundles these on Windows only: the SDK's LICENSE.txt and NOTICE.txt, as shipped in
+    its NuGet package (packaging/webview2/)."""
+    folder = Path(__file__).resolve().parent / "webview2"
+    text = "\n\n----\n\n".join((folder / n).read_text(encoding="utf-8").strip() for n in ("LICENSE.txt", "NOTICE.txt"))
+    return (f"Microsoft WebView2 SDK {WEBVIEW2} (Microsoft.Web.WebView2.Core.dll, Microsoft.Web.WebView2.WinForms.dll, "
+            "WebView2Loader.dll; bundled by pywebview)", text)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
@@ -105,13 +116,15 @@ def main(argv=None):
             continue
         parts.append(f"{RULE}\n{name_of(d)} {d.version}" + ("" if how == "shipped" else f" ({how})") + f"\n{RULE}\n\n"
                      + "\n\n----\n\n".join(found) + "\n")
-    for title, text in ([] if a.no_runtime else runtime()):
+    win = sys.platform == "win32"
+    for title, text in ([] if a.no_runtime else runtime()) + ([webview2()] if win else []):
         if text is None:
             missing.append(title)
         else:
             parts.append(f"{RULE}\n{title}\n{RULE}\n\n{text}\n")
     Path(a.out).write_text("\n".join(parts), encoding="utf-8", newline="\n")
     print(f"{a.out}: {len(every)} distributions" + ("" if a.no_runtime else " + Python + OpenSSL")
+          + (" + WebView2 SDK" if win else "")
           + (f"; NO LICENCE TEXT FOR: {', '.join(missing)}" if missing else "; every licence text found"))
     return 1 if missing else 0
 
