@@ -232,7 +232,10 @@ def _install_gtk():
             return True
         return nav(self, wv, decision, kind)
 
-    def on_js_bridge_call(self, manager, message):      # WebKitGTK gives no sender: the main frame's URI
+    # WebKitGTK names no sender frame, so this checks the main frame's URI: a frame on_navigation lets in (site pages,
+    # about:blank, the site's blob:) or that never asks it (javascript:) posts as the page, sandboxed or not. The site
+    # has no frames; README: never untrusted HTML in one.
+    def on_js_bridge_call(self, manager, message):
         try:
             if on_site(self.webview.get_uri()):
                 return bridge(self, manager, message)

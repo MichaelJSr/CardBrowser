@@ -100,8 +100,8 @@ To uninstall, delete the app, then (optional) its settings and website data:
 **The site hook** (TTSCardMaker `site/assets/app.js`, `appHook`): each card dialog has an empty `div.card-app` in
 `#modal .image-wrap` with `data-file-psd` / `data-file-png` (repo paths with `/`), and openCard fires a `card-dialog`
 event on `document` with `detail = {id, psd, png, slot}`. In a browser the slot stays empty and hidden. A page CSP must
-allow `'unsafe-eval'` (pywebview builds its bridge with `new Function`). AutoCroissant's `tests/test_site_app_hook.py`
-guards the hook.
+allow `'unsafe-eval'` (pywebview builds its bridge with `new Function`). No untrusted HTML in any frame, sandboxed or
+not: on Linux the app cannot tell a frame from the page. AutoCroissant's `tests/test_site_app_hook.py` guards the hook.
 
 **Run from source**: `pip install -r requirements.txt -c constraints.txt pytest`, then `python cardbrowser.py`
 (tests: `python -m pytest -q tests`).
