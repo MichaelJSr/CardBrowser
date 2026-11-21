@@ -78,7 +78,7 @@ CardBrowser is free and not signed with a paid Apple or Microsoft certificate, s
   **Open this page in my browser** in the CardBrowser menu).
 - **Dragging the card file**: click Show, then drag the file from your file manager. Dragging the picture on the page
   drags the website's copy.
-- **Offline**: the window stays blank. Connect, then use **Reload** in the CardBrowser menu.
+- **Offline**: the window stays blank (Windows: an error page). Connect, then use **Reload** in the CardBrowser menu.
 
 ## Updates and uninstalling
 
