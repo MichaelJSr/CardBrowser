@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import zlib
 from pathlib import Path
 
@@ -464,7 +465,8 @@ def run(opts):
         try:
             steps_body(h, rec, S, O, site, root, step, window)
         except Exception as e:                       # noqa: BLE001
-            step("X", "unexpected error", False, cardbrowser.where(e))
+            at = [f.lineno for f in traceback.extract_tb(e.__traceback__) if os.path.basename(f.filename) == "selftest.py"]
+            step("X", "unexpected error", False, cardbrowser.where(e) + (f" from selftest.py:{at[-1]}" if at else ""))
         finally:
             step("ST14", "no writes", snapshot(clone) == before, "fixture unchanged")
             window.destroy()
@@ -694,7 +696,7 @@ def steps_body(h, rec, S, O, site, root, step, window):
     time.sleep(0.8)
     opened = rec.take()
     cardbrowser._first, cardbrowser.RELEASES = True, site + "releases-old.json"
-    h.load(site)
+    h.load(site + "?again")                          # WebView2 skips loading the same address
     time.sleep(1.5)
     none = h.js("document.querySelectorAll('.card-app-update').length") == 0
     tag_url = "https://github.com/MichaelJSr/CardBrowser/releases/tag/"
