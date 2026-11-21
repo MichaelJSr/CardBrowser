@@ -18,6 +18,7 @@ ID_OK = re.compile(r"[0-9A-Za-z.+-]{1,32}").fullmatch
 ARG_MAX = 1024                              # the path rule refuses over 240 with a plain reply
 ENGINE = {"mac": "wkwebview", "win": "edgechromium", "linux": "gtkwebkit2"}
 PATCHED = []                                # what install() patched (self-test ST1)
+PLATFORM = None                             # the patched pywebview backend module
 _browser = webbrowser.open                  # the self-test swaps in a recorder
 
 
@@ -70,7 +71,7 @@ def outside(url, *_, **__):
 def gate(base):
     """pywebview's js_bridge_call, passing only the three names with a plain id and exactly one string argument."""
     def js_bridge_call(window, name, params, value_id):
-        if (name in ALLOWED and isinstance(value_id, str) and ID_OK(value_id) and isinstance(params, list)
+        if (isinstance(name, str) and name in ALLOWED and isinstance(value_id, str) and ID_OK(value_id) and isinstance(params, list)
                 and len(params) == 1 and isinstance(params[0], str) and len(params[0]) <= ARG_MAX):
             return base(window, name, params, value_id)
         log.warning("bridge: dropped %.40r", name)
@@ -80,7 +81,7 @@ def gate(base):
 
 def install(site=LIVE):
     """Checks the engine and patches pywebview for this OS. A missing name raises: the app does not start unguarded."""
-    global SITE
+    global SITE, PLATFORM
     SITE = urlsplit(site)
     if PATCHED:
         return PATCHED
@@ -93,6 +94,7 @@ def install(site=LIVE):
     P.js_bridge_call = gate(P.js_bridge_call)          # each backend calls its own imported name
     P.webbrowser = types.SimpleNamespace(open=outside)  # pywebview's target=_blank openers
     PATCHED.extend(["js_bridge_call", "webbrowser"])
+    PLATFORM = P
     return PATCHED
 
 
@@ -101,18 +103,27 @@ def _install_mac():
     from webview.platforms import cocoa as P
 
     class CBBridge(P.BrowserView.JSBridge):            # ObjC class names are global: unique, defined once
-        def userContentController_didReceiveScriptMessage_(self, ctl, msg):   # main thread
-            if msg.frameInfo().isMainFrame() and on_site(msg.webView().URL().absoluteString()):
-                return objc.super(CBBridge, self).userContentController_didReceiveScriptMessage_(ctl, msg)
-            log.warning("bridge: sender refused")
+        def userContentController_didReceiveScriptMessage_(self, ctl, msg):   # main thread; never raises into AppKit
+            try:
+                if msg.frameInfo().isMainFrame() and on_site(msg.webView().URL().absoluteString()):
+                    return objc.super(CBBridge, self).userContentController_didReceiveScriptMessage_(ctl, msg)
+                log.warning("bridge: sender refused")
+            except Exception as e:                      # noqa: BLE001 (a malformed message)
+                log.warning("bridge: bad message (%s)", type(e).__name__)
 
     class CBDelegate(P.BrowserView.BrowserDelegate):
         def webView_decidePolicyForNavigationAction_decisionHandler_(self, wv, action, handler):
-            url, frame = str(action.request().URL().absoluteString()), action.targetFrame()
-            if frame_ok(url) or (frame is None and not action.shouldPerformDownload()):
+            try:
+                url, frame = str(action.request().URL().absoluteString()), action.targetFrame()
+                ok = frame_ok(url) or (frame is None and not action.shouldPerformDownload())
+                link = frame is not None and frame.isMainFrame() and action.navigationType() == 0   # a link click
+            except Exception as e:                      # noqa: BLE001
+                log.warning("navigation: %s", type(e).__name__)
+                ok = link = False
+            if ok:
                 return objc.super(CBDelegate, self).webView_decidePolicyForNavigationAction_decisionHandler_(
                     wv, action, handler)
-            if frame is not None and frame.isMainFrame() and action.navigationType() == 0:   # a link click
+            if link:
                 outside(url)
             handler(0)                                  # cancel, any frame
 
@@ -137,9 +148,12 @@ def _install_win():
             outside(url)
 
     def on_script_notify(self, sender, args):
-        if on_site(str(args.Source)):
-            return notify(self, sender, args)
-        log.warning("bridge: sender refused")
+        try:
+            if on_site(str(args.Source)):
+                return notify(self, sender, args)
+            log.warning("bridge: sender refused")
+        except Exception as e:                          # noqa: BLE001
+            log.warning("bridge: bad message (%s)", type(e).__name__)
 
     P.EdgeChrome.on_navigation_start, P.EdgeChrome.on_script_notify = on_navigation_start, on_script_notify
     PATCHED.extend(["on_navigation_start", "on_script_notify"])
@@ -177,9 +191,12 @@ def _install_gtk():
         return nav(self, wv, decision, kind)
 
     def on_js_bridge_call(self, manager, message):      # WebKitGTK gives no sender: the main frame's URI
-        if on_site(self.webview.get_uri()):
-            return bridge(self, manager, message)
-        log.warning("bridge: sender refused")
+        try:
+            if on_site(self.webview.get_uri()):
+                return bridge(self, manager, message)
+            log.warning("bridge: sender refused")
+        except Exception as e:                          # noqa: BLE001
+            log.warning("bridge: bad message (%s)", type(e).__name__)
 
     P.BrowserView.on_navigation, P.BrowserView.on_js_bridge_call = on_navigation, on_js_bridge_call
     PATCHED.extend(["on_navigation", "on_js_bridge_call"])

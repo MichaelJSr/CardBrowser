@@ -246,7 +246,10 @@ def note(text):
 
 
 def choose_folder():
-    root, msg = pick_folder()
+    try:
+        root, msg = pick_folder()
+    except PermissionError:
+        msg = NO_ACCESS
     note(msg if msg else "Folder saved.")
 
 
@@ -284,14 +287,14 @@ def start(func=None, private=False):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if sys.stdout is None or sys.stderr is None:     # a windowed Windows build has neither
+        sys.stdout = sys.stderr = open(os.devnull, "w")
     if "--version" in argv:
         print(VERSION)
         return 0
     if "--self-test" in argv:
         import selftest
         return selftest.main(argv)
-    if sys.stderr is None:                           # a windowed Windows build
-        sys.stdout = sys.stderr = open(os.devnull, "w")
     site = LIVE
     if "--site" in argv:
         i = argv.index("--site")

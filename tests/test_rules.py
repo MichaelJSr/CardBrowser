@@ -116,7 +116,8 @@ def test_live_paths_rule_length():
     ("open_psd", ["x"], '"]);x();//', False), ("open_psd", ["x"], "", False), ("open_psd", ["x"], "1" * 33, False),
     ("open_psd", ["x"], 1, False), ("open_psd", [], "1", False), ("open_psd", ["x", "y"], "1", False),
     ("open_psd", [42], "1", False), ("open_psd", [None], "1", False), ("open_psd", "x", "1", False), ("open_psd", None, "1", False),
-    ("copy_png", ["x" * 1025], "1", False), ("OPEN_PSD", ["x"], "1", False), ("open_psd ", ["x"], "1", False)])
+    ("copy_png", ["x" * 1025], "1", False), ("OPEN_PSD", ["x"], "1", False), ("open_psd ", ["x"], "1", False),
+    (["open_psd"], ["x"], "1", False), ({"a": 1}, ["x"], "1", False), (None, ["x"], "1", False)])
 def test_gate(name, params, vid, passes):
     seen = []
     guards.gate(lambda *a: seen.append(a))(None, name, params, vid)

@@ -412,7 +412,8 @@ def _refused(port):
 def steps_body(h, rec, S, O, site, root, step, window):
     ok = h.ready()
     renderer = getattr(window.gui, "renderer", "?")
-    gated = getattr(getattr(window.gui, "js_bridge_call", None), "gated", False)
+    gated = getattr(getattr(guards.PLATFORM, "js_bridge_call", None), "gated", False) and \
+        getattr(guards.PLATFORM, "webbrowser", None).open is guards.outside
     version = pywebview_version()
     step("ST1", "engine + pins", ok and renderer == guards.ENGINE[OS] and version == "6.2.1" and gated
          and len(guards.PATCHED) == 4, f"renderer {renderer}, pywebview {version}, patched {guards.PATCHED}")
@@ -473,14 +474,19 @@ def steps_body(h, rec, S, O, site, root, step, window):
             ("__class__", [], "3"), ("pywebviewMoveWindow", [3000, 3000], "move"),
             ("pywebviewStateUpdate", {"key": "x", "value": 1}, "4"), ("pywebviewStateDelete", "x", "5"),
             ("pywebviewAsyncCallback", "1", "6"), ("open_psd", [snack[0]], '"]);x();//'), ("open_psd", [], "7"),
-            ("open_psd", [snack[0], snack[0]], "8"), ("open_psd", [42], "9"), ("reveal", ["x" * 2000], "10")]
+            ("open_psd", [snack[0], snack[0]], "8"), ("open_psd", [42], "9"), ("reveal", ["x" * 2000], "10"),
+            (["open_psd"], [snack[0]], "11")]
     for name, params, vid in sent:
         h.raw(name, params, vid)
+    if OS != "win":                                   # not JSON at all: refused without a crash
+        h.js("window.webkit.messageHandlers.jsBridge.postMessage('not json'); 1")
     time.sleep(1.5)
     drops = sum("bridge: dropped" in m for m in rec.logs) - drops0
     intact = cardbrowser.VERSION == version and "VERSION" in vars(cardbrowser)
-    step("ST8", "gate", intact and (window.x, window.y) == xy and h.js("window.__pwned") == 0
-         and len(rec.calls) == calls and drops == len(sent) and not rec.take(), f"{drops} of {len(sent)} dropped")
+    bad_json = sum("bridge: bad message" in m for m in rec.logs)
+    step("ST8", "gate", intact and (window.x, window.y) == xy and h.js("window.__pwned") == 0 and h.js("1 + 1") == 2
+         and len(rec.calls) == calls and drops == len(sent) and (OS == "win" or bad_json == 1) and not rec.take(),
+         f"{drops} of {len(sent)} dropped, {bad_json} non-JSON message refused")
     # ST9: navigation stays on the site; only http(s) link clicks reach the system browser
     home, bad = h.url(), []
     guards._opened.clear()
