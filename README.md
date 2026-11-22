@@ -64,7 +64,7 @@ CardBrowser is free and not signed with a paid Apple or Microsoft certificate, s
 | CardBrowser can't reach this page… | Use **Reload** in the CardBrowser menu (or press F5). |
 | …this version of the card site has no file buttons… | The website changed: tell the developers. Searching still works. |
 | That didn't work (…) | Try again; if it keeps happening, send the log (**Show log** in the menu). |
-| Windows blocked CardBrowser's files… (0.1.1: Failed to resolve Python.Runtime.Loader.Initialize) | Move the `CardBrowser` folder to a folder on this computer, or download it again and **Unblock** the zip before extracting (Windows step 1). |
+| CardBrowser could not load its Windows parts… (0.1.1: Failed to resolve Python.Runtime.Loader.Initialize) | Get 0.1.2 or newer. With 0.1.1, or if it still happens: delete the folder, **Unblock** the zip (right-click > Properties) and extract it again (Windows step 1); on a network drive, copy the folder to this computer. |
 
 ## What CardBrowser never does
 

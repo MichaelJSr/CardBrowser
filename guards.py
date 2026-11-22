@@ -180,8 +180,8 @@ def _install_win():
             raise
         need_webview2()
     except Exception as e:                              # noqa: BLE001 (.NET refused the app's DLLs)
-        log.error("no .NET: %s", type(e).__name__)
-        blocked()
+        log.error("winforms load failed: %s", type(e).__name__)
+        blocked(e)
     if winforms.renderer != "edgechromium":
         need_webview2()
     from webview.platforms import edgechromium as P
@@ -260,13 +260,14 @@ def need_webview2():
     sys.exit(1)
 
 
-def blocked():
-    """.NET refused the app's own DLLs (a blocked download or a network folder): say what to do, exit."""
+def blocked(e):
+    """The app's own .NET parts did not load (a blocked download, a network folder): say what to do, exit."""
     import ctypes
-    ctypes.windll.user32.MessageBoxW(None, "Windows blocked CardBrowser's files in this folder. Move the CardBrowser "
-                                     "folder to a folder on this computer (for example Documents), then start it "
-                                     "again. When you download CardBrowser: right-click the zip > Properties > tick "
-                                     "Unblock > OK, then Extract All.", "CardBrowser", 0x10)
+    ctypes.windll.user32.MessageBoxW(None, "CardBrowser could not load its Windows parts. If you downloaded it: delete "
+                                     "this folder, right-click the zip > Properties > tick Unblock > OK, then Extract "
+                                     "All again. If the folder is on a network drive: copy it to this computer (for "
+                                     "example Documents). Keep the name CardBrowser.exe.\n\n"
+                                     f"{type(e).__name__}: {str(e)[:300]}", "CardBrowser", 0x10)
     sys.exit(1)
 
 

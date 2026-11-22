@@ -185,7 +185,7 @@ def test_windows_net_refused_says_so(tmp_path, monkeypatch):
 
     class Exit(Exception):
         pass
-    monkeypatch.setattr(guards, "blocked", lambda: (_ for _ in ()).throw(Exit()))
+    monkeypatch.setattr(guards, "blocked", lambda e: (_ for _ in ()).throw(Exit()))
     with pytest.raises(Exit):
         guards._install_win()
 

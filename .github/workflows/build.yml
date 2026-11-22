@@ -146,6 +146,10 @@ jobs:
           $m = Join-Path $env:RUNNER_TEMP m
           Copy-Item (Join-Path $env:RUNNER_TEMP t\CardBrowser) $m -Recurse
           Get-ChildItem $m -Recurse -File | ForEach-Object { Set-Content -LiteralPath $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3" }
+          $all = @(Get-ChildItem $m -Recurse -File)       # every file must carry the mark, or this tests nothing
+          $n = @($all | Where-Object { Get-Item -LiteralPath $_.FullName -Stream Zone.Identifier -ErrorAction SilentlyContinue }).Count
+          "marked $n of $($all.Count) files"
+          if ($n -eq 0 -or $n -ne $all.Count) { Write-Error 'files not marked'; exit 1 }
           $si = [Diagnostics.ProcessStartInfo]::new((Join-Path $m CardBrowser.exe))
           $si.UseShellExecute = $false                   # as after Run anyway (no zone prompt); its output shows here
           $si.WorkingDirectory = $PWD.Path
