@@ -139,6 +139,28 @@ jobs:
           $p = Start-Process $exe -ArgumentList '--self-test', '--ci', '--report', 'selftest-win.json' -WorkingDirectory $pwd -Wait -PassThru
           Get-Content selftest-win.json -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { Write-Error "self-test exit code $($p.ExitCode)"; exit 1 }
+      - name: Self-test a downloaded copy
+        timeout-minutes: 5
+        run: |
+          # Explorer marks each file it unzips from a download (Zone.Identifier, ZoneId=3); Expand-Archive does not
+          $m = Join-Path $env:RUNNER_TEMP m
+          Copy-Item (Join-Path $env:RUNNER_TEMP t\CardBrowser) $m -Recurse
+          Get-ChildItem $m -Recurse -File | ForEach-Object { Set-Content -LiteralPath $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3" }
+          $si = [Diagnostics.ProcessStartInfo]::new((Join-Path $m CardBrowser.exe))
+          $si.UseShellExecute = $false                   # as after Run anyway (no zone prompt); its output shows here
+          $si.WorkingDirectory = $PWD.Path
+          '--self-test', '--ci', '--report', 'selftest-win-marked.json' | ForEach-Object { $si.ArgumentList.Add($_) }
+          $p = [Diagnostics.Process]::Start($si)
+          if (-not $p.WaitForExit(170000)) {             # an error box waits for a click: print it
+            Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+            $A = [System.Windows.Automation.AutomationElement]
+            $A::RootElement.FindAll('Children', [System.Windows.Automation.PropertyCondition]::new($A::ProcessIdProperty, $p.Id)) |
+              Where-Object { $_.Current.ClassName -eq '#32770' } |
+              ForEach-Object { $_.FindAll('Descendants', [System.Windows.Automation.Condition]::TrueCondition) } | ForEach-Object { $_.Current.Name }
+            Stop-Process -Id $p.Id -Force
+            Write-Error 'no exit in 170 s'; exit 1
+          }
+          if ($p.ExitCode -ne 0) { Write-Error "self-test exit code $($p.ExitCode)"; exit 1 }
       - name: Saved data survives a restart
         timeout-minutes: 5
         run: |
