@@ -179,6 +179,9 @@ def _install_win():
         if e.name != MSHTML:
             raise
         need_webview2()
+    except Exception as e:                              # noqa: BLE001 (.NET refused the app's DLLs)
+        log.error("no .NET: %s", type(e).__name__)
+        blocked()
     if winforms.renderer != "edgechromium":
         need_webview2()
     from webview.platforms import edgechromium as P
@@ -254,6 +257,16 @@ def need_webview2():
     ctypes.windll.user32.MessageBoxW(None, "CardBrowser needs Microsoft Edge WebView2. Install it from the page that "
                                      "opens now, then start CardBrowser again.", "CardBrowser", 0x10)
     outside(page)
+    sys.exit(1)
+
+
+def blocked():
+    """.NET refused the app's own DLLs (a blocked download or a network folder): say what to do, exit."""
+    import ctypes
+    ctypes.windll.user32.MessageBoxW(None, "Windows blocked CardBrowser's files in this folder. Move the CardBrowser "
+                                     "folder to a folder on this computer (for example Documents), then start it "
+                                     "again. When you download CardBrowser: right-click the zip > Properties > tick "
+                                     "Unblock > OK, then Extract All.", "CardBrowser", 0x10)
     sys.exit(1)
 
 

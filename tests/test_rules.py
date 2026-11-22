@@ -174,6 +174,22 @@ def test_windows_never_loads_mshtml(tmp_path, monkeypatch):
     assert "webview.platforms.winforms" not in sys.modules
 
 
+def test_windows_net_refused_says_so(tmp_path, monkeypatch):
+    """.NET refuses the app's DLLs (a blocked download, a network folder): a plain box, not a traceback."""
+    import sys
+    import webview.platforms
+    (tmp_path / "winforms.py").write_text("raise RuntimeError('Failed to resolve Python.Runtime.Loader.Initialize')\n")
+    monkeypatch.setattr(webview.platforms, "__path__", [str(tmp_path)])
+    monkeypatch.delitem(sys.modules, "webview.platforms.winforms", raising=False)
+    monkeypatch.setitem(sys.modules, guards.MSHTML, None)
+
+    class Exit(Exception):
+        pass
+    monkeypatch.setattr(guards, "blocked", lambda: (_ for _ in ()).throw(Exit()))
+    with pytest.raises(Exit):
+        guards._install_win()
+
+
 class Decision:                                       # WebKitGTK's NavigationPolicyDecision, action and request in one
     def __init__(self, url):
         self.url, self.ignored = url, False

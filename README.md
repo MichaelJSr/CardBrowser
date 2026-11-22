@@ -64,6 +64,7 @@ CardBrowser is free and not signed with a paid Apple or Microsoft certificate, s
 | CardBrowser can't reach this page… | Use **Reload** in the CardBrowser menu (or press F5). |
 | …this version of the card site has no file buttons… | The website changed: tell the developers. Searching still works. |
 | That didn't work (…) | Try again; if it keeps happening, send the log (**Show log** in the menu). |
+| Windows blocked CardBrowser's files… (0.1.1: Failed to resolve Python.Runtime.Loader.Initialize) | Move the `CardBrowser` folder to a folder on this computer, or download it again and **Unblock** the zip before extracting (Windows step 1). |
 
 ## What CardBrowser never does
 
@@ -109,9 +110,9 @@ read` in a second run with the same `CARDBROWSER_HOME`, checks that the website'
 **Build**: from source, `pip install -r requirements.txt -c constraints.txt pyinstaller pytest` (tests: `python -m
 pytest -q tests`), then `python packaging/notices.py THIRD-PARTY-NOTICES.txt` and `pyinstaller --noconfirm
 packaging/CardBrowser.spec`. GitHub Actions (`.github/workflows/build.yml`) builds macOS and Windows, self-tests each
-unpacked build (macOS: `packaging/minos.py` checks that no part needs a newer macOS than 11), and on a `v<VERSION>` tag
-makes a pre-release. pywebview is pinned to 6.2.1 because `guards.py` patches its internals: a new version must pass
-`tests/test_pins.py` and both systems' self-tests.
+unpacked build (Windows: also a copy marked as downloaded; macOS: `packaging/minos.py` checks that no part needs a newer
+macOS than 11), and on a `v<VERSION>` tag makes a pre-release. pywebview is pinned to 6.2.1 because `guards.py` patches
+its internals: a new version must pass `tests/test_pins.py` and both systems' self-tests.
 
 **Icon**: the game's logo as on the rulebook cover. `python packaging/icon/make_icon.py <Half_Holder.jpg>` (TTSCardMaker
 `MDW/Assets/Holders/`) rebuilds `packaging/icon/CardBrowser.icns` (on a Mac) and `CardBrowser.ico`.

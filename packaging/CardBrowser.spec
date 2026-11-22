@@ -2,6 +2,7 @@
 # Env: CB_TARGET_ARCH (macOS arm64 / x86_64; default this machine's), CARDBROWSER_BUNDLE_ID (a test id; default the real one).
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -41,6 +42,8 @@ exe = EXE(
     icon=None if MAC else str(ICON),   # Windows: the exe, its window and the taskbar (pywebview takes the exe's icon)
 )
 coll = COLLECT(exe, a.binaries, a.datas, upx=False, name="CardBrowser")
+if not MAC:                                              # .NET reads it beside the exe: blocked or network folders load
+    shutil.copy2(ROOT / "packaging" / "CardBrowser.exe.config", Path(DISTPATH) / "CardBrowser" / "CardBrowser.exe.config")
 if MAC:
     app = BUNDLE(
         coll,
